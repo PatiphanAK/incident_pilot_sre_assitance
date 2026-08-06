@@ -1,0 +1,43 @@
+{
+  "resource": "/runs",
+  "path": "/runs",
+  "httpMethod": "POST",
+  "headers": {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Host": "localhost:3000",
+    "User-Agent": "curl/8.0",
+    "X-Forwarded-For": "127.0.0.1",
+    "X-Forwarded-Port": "3000",
+    "X-Forwarded-Proto": "http"
+  },
+  "multiValueHeaders": {
+    "Accept": ["application/json"],
+    "Content-Type": ["application/json"]
+  },
+  "queryStringParameters": null,
+  "multiValueQueryStringParameters": null,
+  "pathParameters": null,
+  "stageVariables": null,
+  "requestContext": {
+    "resourceId": "runs",
+    "resourcePath": "/runs",
+    "httpMethod": "POST",
+    "extendedRequestId": "example",
+    "requestTime": "06/Aug/2026:14:00:00 +0000",
+    "path": "/runs",
+    "accountId": "000000000000",
+    "protocol": "HTTP/1.1",
+    "stage": "Dev",
+    "domainPrefix": "incident-pilot",
+    "requestTimeEpoch": 1780000000000,
+    "identity": {
+      "sourceIp": "127.0.0.1",
+      "accessKey": null,
+      "userArn": null,
+      "userAgent": "curl/8.0"
+    }
+  },
+  "body": "{\"incident\":{\"description\":\"high 5xx on checkout\",\"severity\":\"high\",\"service\":\"checkout-api\",\"region\":\"us-east-1\",\"signals\":[\"5xx-spike\",\"latency-p99\"]},\"session_id\":\"sess-demo\"}",
+  "isBase64Encoded": false
+}

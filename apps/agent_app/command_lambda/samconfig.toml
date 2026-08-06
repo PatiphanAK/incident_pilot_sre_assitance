@@ -1,0 +1,17 @@
+# SAM deploy defaults for `sam deploy --guided` / `sam deploy --config-file samconfig.toml`.
+# `sam build` and `sam local start-api` do not require these.
+
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "incident-pilot-command"
+s3_bucket = "REPLACE_WITH_YOUR_DEPLOY_BUCKET"
+s3_prefix = "command_lambda"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = false
+image_repositories = []
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
