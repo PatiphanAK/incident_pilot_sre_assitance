@@ -1,8 +1,21 @@
-# Incident Pilot Backend
+# Incident Pilot Backend — Runtime & Design Spec
 
-AI-powered SRE incident investigation agent. The Agent observes a **Production Application (the demo target)**, retrieves historical incident knowledge from **Shared AgeMem**, reasons over the incident with a foundation model (Claude / Nova via AWS Bedrock), inspects infrastructure through an **MCP** tool layer, and stores new operational knowledge for future incidents.
+This is the **application runtime** for the Incident Pilot agent (`apps/agent_app/backend_run`): a Python/FastAPI service that hosts the agent's bounded contexts — the execution loop, the MCP boundary, Shared AgeMem, and the agent tools.
 
-> **Design and architecture specification (V1).** No production code is implemented yet — this document is the source of truth for the implementation phase. It is aligned with `Architecture.png` at the repo root.
+> **V1 design and architecture specification.** No production code is implemented yet — this document is the source of truth for this runtime's design.
+>
+> For the **project-wide overview** (the full request path, the two tiers, the monorepo layout), see the root [`Readme.md`](../../../Readme.md) and [`apps/agent_app/README.md`](../README.md). This file does not repeat that context — it specifies the runtime itself.
+
+## Scope of This Runtime
+
+This runtime owns the **agent-side** execution components:
+
+- the **Agent Orchestration** loop and its adapters (Bedrock, SQS consumer, CockroachDB run state),
+- the **MCP layer** (client + server) that mediates all tool and memory access,
+- **Agent Tooling** (`get_log()`, `get_metric()`, `get_health()`),
+- **Shared AgeMem** (Persistent Memory: Agent State + Vector Index).
+
+> **Out of scope here** — owned elsewhere in the platform: the Static Frontend, API Gateway, and the thin Main Backend Lambda. These are described in [`apps/agent_app/README.md`](../README.md). The **Production Application (Demo Target)** in `apps/target_app` is a separate app this runtime observes read-only.
 
 ## Core Agent Loop
 
@@ -10,142 +23,32 @@ AI-powered SRE incident investigation agent. The Agent observes a **Production A
 Observe → Retrieve → Reason → Tool Call → Observe → ... → Store
 ```
 
-A single investigation may last **5–20 minutes** and involve many Bedrock calls and many tool calls. Every architecture decision below exists to support that reality.
+A single investigation may last **5–20 minutes** and involve many Bedrock calls and many tool calls. Every design decision below exists to support that reality — which is why the loop runs on ECS Fargate behind SQS, not on Lambda.
 
-## The Two Tiers
+## Stack (this runtime)
 
-The system has two clearly separated tiers (see `Architecture.png`):
-
-- **Incident Pilot SRE Assistance AI Agent** — the Agent platform. This is what this backend implements. It includes the API entrypoint, the async execution path, the Agent Orchestrator, Persistent Memory (**Shared AgeMem**), and Agent Tooling.
-- **Production Application (Demo Target)** — a *separate* sample production environment being investigated. It is **not** part of the Agent platform. It has its own Frontend App, backends (Lambda), Service DBs, and Search/Analytics. The Agent reads its logs, metrics, and health state — it never becomes part of it.
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│  Incident Pilot SRE Assistance AI Agent  (Shared AgeMem)    │
-│                                                             │
-│  Static Frontend → API Gateway → Main Backend (Lambda)      │
-│       → AWS SQS → ECS Fargate Agent Worker                  │
-│             → Agent Orchestration                           │
-│                   ├── Foundation Model (Bedrock)            │
-│                   ├── Persistent Memory  (MCP)              │
-│                   └── Agent Tooling      (MCP)              │
-│                             │ AWS SDK                       │
-└─────────────────────────────┼───────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Production Application (Demo Target)                       │
-│  Frontend App · Backend 1/2 · Service DB · Search/Analytics │
-└─────────────────────────────────────────────────────────────┘
-```
-
-The Agent Tooling crosses the tier boundary using the **AWS SDK** to read logs/metrics/health from the demo target. The demo target exposes no Agent-specific code — it is simply observed.
-
-## Stack
-
-- **Python** + **FastAPI** — application runtime (Main Backend, Agent Worker)
+- **Python** + **FastAPI** — application runtime
 - **AWS Bedrock** — foundation model reasoning (Claude / Nova)
-- **Amazon SQS** — async execution boundary
-- **Amazon ECS Fargate** — long-running Agent Worker
-- **AWS Lambda** + **API Gateway** — public API entrypoint only
-- **Static Frontend** — DevOps/SRE UI (S3 + CloudFront-style hosting)
+- **Amazon SQS** — async execution boundary (worker consumes run jobs)
+- **Amazon ECS Fargate** — long-running Agent Worker host
 - **CockroachDB** — persistent application state (Agent State + relational memory)
-- **Vector Index** — semantic retrieval for Shared AgeMem (cost-efficient V1 choice, see Memory)
+- **Vector Index** — semantic retrieval for Shared AgeMem (cost-efficient V1 choice, behind a port)
 - **MCP (Model Context Protocol)** — protocol boundary for tooling and memory access
-- **Amazon CloudWatch** — observability / incident data source in the demo target
+- **boto3** — AWS SDK for read-only observation of the Demo Target
 - **Docker** — local dev and container build
 
-> Cost discipline: this stack intentionally avoids extra managed services beyond what the diagram requires. No standalone managed vector DB, no additional orchestration services, no streaming buses. See *Cost & MVP Posture*.
+> Cost discipline: no standalone managed vector DB, no extra orchestration or streaming services. See *Cost & MVP Posture*.
 
-## Critical Architecture Decision: Lambda is not the Orchestrator
+## Critical Design Point: the Loop Does Not Run on Lambda
 
-> **Lambda is an API/command submission layer, not the Agent Orchestrator.**
+> **Lambda is an API/command submission layer, not the Agent Orchestrator.** The Lambda is described in [`apps/agent_app/README.md`](../README.md); this runtime is the long-running side.
 
-Agent execution is long-running and dynamic. A single run performs many Bedrock calls and tool calls, often taking 5–20 minutes. Lambda's invocation lifecycle and timeout (15 min hard cap) are incompatible with that pattern.
+Agent execution is long-running and dynamic. A single run performs many Bedrock calls and tool calls, often taking 5–20 minutes. Lambda's invocation lifecycle and 15-min hard cap are incompatible with that, so the loop lives here on ECS Fargate, decoupled from the request lifecycle via SQS. Execution time is bounded by the run, not by Lambda.
 
-Responsibilities are split:
-
-- **Lambda (Main Backend)** only validates the request, creates a run, submits a job to SQS, and returns `202 Accepted`. It never executes the reasoning loop.
-- **ECS Fargate** hosts the long-running Agent Worker that owns the loop. It is decoupled from the request lifecycle via SQS, so its execution time is bounded by the run, not by Lambda.
-
-### Request Path (V1)
-
-```text
-DevOps/SRE
-  ↓
-Static Frontend
-  ↓ (REST API / HTTPS)
-API Gateway            ← public API boundary
-  ↓
-Main Backend (Lambda)  ← thin command-submission layer
-  ↓ (HTTPS)
-AWS SQS                ← async execution boundary
-  ↓ (HTTPS)
-ECS Fargate Agent Worker
-  ↓ (MCP)
-Agent Orchestration
-  ├── Foundation Model (Bedrock)
-  ├── Persistent Memory   (via MCP)
-  └── Agent Tooling       (via MCP → AWS SDK → Demo Target)
-```
-
-A single execution:
-
-```text
-Observe
-  ↓
-Retrieve Memory
-  ↓
-Bedrock Reasoning
-  ↓
-Tool Call?
-  ├── Yes → Execute Tool (via MCP) → Observe Again (loop)
-  └── No  → Store Memory → Complete
-```
-
-## Responsibilities
-
-### Static Frontend
-
-The DevOps/SRE UI. Calls the Main Backend through API Gateway over REST/HTTPS. Pure client; contains no Agent logic.
-
-### API Gateway
-
-The **public API boundary**. Owns routing, authN/authZ at the edge, request throttling, and request/response transformation. It fronts the Main Backend Lambda. It performs **no** Agent execution.
-
-### Main Backend (Lambda)
-
-1. Validate the request.
-2. Create an `agent_session` / `agent_run` record in CockroachDB.
-3. Publish an Agent Run job to SQS.
-4. Return `202 Accepted`.
-
-It must **not** execute the Agent reasoning loop.
-
-```http
-POST /agent/runs          → 202 { run_id, session_id, status: "queued" }
-GET  /agent/runs/{run_id} → run status
-```
-
-Run statuses: `queued · running · waiting_for_tool · completed · failed · cancelled`
-
-### SQS
-
-The asynchronous execution boundary between the short-lived API and the long-running worker. Provides:
-
-- **decoupling** — API returns immediately; worker consumes at its own pace.
-- **buffering** — submission spikes queue without overwhelming workers.
-- **retry** — failed deliveries reappear on the queue.
-- **failure recovery** — visibility timeout + DLQ for poison messages.
-- **workload smoothing** — concurrency governed by queue depth and worker count.
-
-**Idempotency.** SQS may deliver the same message more than once. Every job is keyed by `run_id` and processed idempotently: re-processing a run that has already progressed resumes from persisted state rather than restarting it. The worker acquires the run only if its status is still `queued`; an already-`running` run is skipped.
-
-### ECS Fargate Agent Worker
-
-Hosts the long-running Agent Worker:
+This runtime's worker:
 
 - consume Agent Run jobs from SQS
-- load persistent run state (Agent State) from CockroachDB
+- load persistent **Agent State** from CockroachDB
 - execute the Agent loop via Agent Orchestration
 - call Bedrock
 - execute tools **through the MCP layer**
@@ -155,12 +58,14 @@ Hosts the long-running Agent Worker:
 
 The worker is **stateless at the process level** — all persistent state lives in CockroachDB, so any container can be replaced or scaled without losing a run.
 
+Run statuses (written by this runtime): `queued · running · waiting_for_tool · completed · failed · cancelled`
+
 ## Agent Orchestration
 
 An application-level component that owns the Agent execution loop. It is **not a fixed pipeline** — the foundation model decides the next tool dynamically via tool calling. There is no hardcoded sequence such as `CloudWatch Logs → Metrics → EC2`.
 
 ```text
-Load Run
+Load Run (Agent State)
   ↓
 Retrieve Relevant Memory      (via MCP → Persistent Memory)
   ↓
@@ -261,13 +166,13 @@ Cost-efficient V1 approach — **avoid an expensive managed vector database**:
 
 ## Failure Handling and Resume
 
-The system assumes an ECS worker can crash at any time. Therefore **all Agent execution state is persisted in CockroachDB** (Agent State), and SQS provides retry and recovery.
+This runtime assumes the ECS worker can crash at any time. Therefore **all Agent execution state is persisted in CockroachDB** (Agent State), and SQS provides retry and recovery.
 
 | Failure                  | Handling                                                                                          |
 | ------------------------ | ------------------------------------------------------------------------------------------------- |
 | Worker crash             | Run state is in CockroachDB. SQS redelivers the job; a new worker loads state and resumes.         |
-| Bedrock timeout          | Retry with backoff; after N attempts the run is marked `failed` with the partial trace intact.   |
-| Tool timeout             | MCP tool returns a structured timeout result; the LLM may retry or pick another tool.            |
+| Bedrock timeout          | Retry with backoff; after N attempts the run is marked `failed` with the partial trace intact.    |
+| Tool timeout             | MCP tool returns a structured timeout result; the LLM may retry or pick another tool.             |
 | Tool failure             | Structured error returned to the LLM via MCP; logged in `tool_call_logs`. Does not crash the run. |
 | Duplicate SQS delivery   | Idempotent by `run_id`; a run already `running` is skipped.                                       |
 | Partial Agent execution  | Each step (observation, tool result, memory write) is persisted before the next; a crash mid-loop loses at most one in-flight step. |
@@ -304,17 +209,17 @@ Principles:
 
 The architecture is designed so **remediation capabilities can be added later without redesign** — they slot in as additional MCP-exposed tools behind the same authorization gate, with a human-approval port that stays a no-op in V1.
 
-## Clean Architecture / DDD Structure
+## Module Layout (this runtime)
 
-The project is organized by **business boundary**, not by technical layer.
+Hexagonal architecture, organized by **business boundary**, not by technical layer. The `src/` directories exist but are not yet populated; this layout is the target.
 
 ```text
 src/
-├── agent/            # the Agent execution loop, orchestration, MCP boundary
-│   ├── domain/       # entities, ports, domain services (no AWS/DB/LLM/MCP imports)
+├── agent/            # execution loop, orchestration, MCP boundary
+│   ├── domain/       # ports: LLMPort, Tool/MCP, Memory, RunState (no AWS/DB/LLM imports)
 │   ├── application/  # use cases: orchestrate run, execute tool, persist state
 │   └── infrastructure/ # adapters: Bedrock, SQS consumer, CockroachDB run state,
-│                      #            MCP client + MCP server (tool & memory)
+│                      #            MCP client + server (tool & memory)
 │
 ├── incident/         # incident context: what an incident is, runbooks
 │   ├── domain/
@@ -353,112 +258,12 @@ Module responsibilities:
 
 Dependency rule: `domain` depends on nothing outward; `application` depends on `domain`; `infrastructure` implements `domain` ports. This keeps the Agent loop testable without AWS, Bedrock, or a real vector store.
 
-## Architecture Diagram
-
-This Mermaid version mirrors `Architecture.png`.
-
-```mermaid
-flowchart TD
-  subgraph Agent["Incident Pilot SRE Assistance AI Agent (Shared AgeMem)"]
-    User[DevOps / SRE] --> FE[Static Frontend]
-    FE -->|REST API| GW[API Gateway]
-    GW -->|HTTPS| Lambda[Main Backend - Lambda]
-    Lambda -->|create run| CRDB1[(CockroachDB)]
-    Lambda -->|HTTPS| SQS[AWS SQS]
-    SQS -->|HTTPS| Worker[ECS Fargate Agent Worker]
-    Worker -->|MCP| Orch[Agent Orchestration]
-    Orch <-->|MCP| FM[Foundation Model - Bedrock]
-    Orch <-->|MCP| Mem[Persistent Memory]
-    Mem --- AST[Agent State]
-    Mem --- VS[Vector Index]
-    Mem --> CRDB2[(CockroachDB)]
-    Orch <-->|MCP| Tools[Agent Tooling]
-    Tools --- T1["get_log()"]
-    Tools --- T2["get_metric()"]
-    Tools --- T3["get_health()"]
-  end
-  Tools -->|AWS SDK| Demo
-  subgraph Demo["Production Application (Demo Target)"]
-    DFA[Frontend App] --> B1[Backend 1]
-    DFA --> B2[Backend 2]
-    B1 --> SDB1[(Service DB)]
-    B2 --> SDB2[(Service DB)]
-    SDB1 --> SA1[Search / Analytics]
-    SDB2 --> SA2[Search / Analytics]
-  end
-```
-
-## Agent Execution Sequence
-
-```mermaid
-sequenceDiagram
-  participant U as DevOps/SRE
-  participant FE as Static Frontend
-  participant GW as API Gateway
-  participant L as Main Backend (Lambda)
-  participant Q as SQS
-  participant W as Agent Worker
-  participant O as Orchestration
-  participant B as Bedrock
-  participant T as Agent Tooling (MCP)
-  participant M as Persistent Memory (MCP)
-  participant D as CockroachDB
-  U->>FE: submit incident
-  FE->>GW: POST /agent/runs
-  GW->>L: route request
-  L->>D: create agent_run (queued)
-  L->>Q: publish run job
-  L-->>FE: 202 { run_id, status: queued }
-  Q->>W: deliver job
-  W->>D: load Agent State
-  W->>O: start loop
-  O->>M: retrieve relevant memory (vector)
-  O->>B: reason (with tools)
-  B-->>O: tool call (e.g. get_log)
-  O->>T: execute tool via MCP
-  T->>T: AWS SDK → Demo Target
-  T-->>O: tool result
-  O->>D: persist tool_call_log + result
-  O->>B: reason again
-  B-->>O: final diagnosis (no tool call)
-  O->>M: store useful memory + embedding
-  M->>D: write memory_entry + links
-  W->>D: mark run completed
-  U->>FE: refresh
-  FE->>GW: GET /agent/runs/{run_id}
-  GW->>L: route request
-  L->>D: read run status
-  L-->>FE: { status: completed, diagnosis }
-```
-
-## Architecture Decisions
-
-| Component              | Responsibility                                           |
-| ---------------------- | -------------------------------------------------------- |
-| Static Frontend        | DevOps/SRE UI                                            |
-| API Gateway            | Public API boundary, edge auth, throttling               |
-| Main Backend (Lambda)  | Request validation + job submission (thin)               |
-| AWS SQS                | Async execution boundary                                 |
-| ECS Fargate            | Long-running Agent Worker                                |
-| Agent Orchestration    | Agent execution loop                                     |
-| Foundation Model       | LLM reasoning (Bedrock: Claude / Nova)                   |
-| MCP                    | Protocol boundary for tooling + memory                   |
-| Agent Tooling          | `get_log()` / `get_metric()` / `get_health()` via MCP    |
-| Persistent Memory      | Shared AgeMem: Agent State + Vector Index                |
-| CockroachDB            | Persistent application state                             |
-| Vector Index           | Semantic retrieval (cost-efficient V1 impl, behind port) |
-| CloudWatch             | Observability / incident data (Demo Target)              |
-| Production Application | Demo Target — the system being investigated              |
-
-> Lambda is an API/command submission layer, not the Agent Orchestrator. MCP is the protocol boundary the orchestrator uses for all tools and memory.
-
 ## Cost & MVP Posture
 
 Optimized for **low AWS cost** and a **practical MVP/demo**:
 
-- **No extra managed services beyond the diagram.** Specifically no standalone managed vector DB — embeddings live alongside relational data behind a port in V1.
+- **No extra managed services.** Specifically no standalone managed vector DB — embeddings live alongside relational data behind a port in V1.
 - **ECS Fargate** sized for a small worker count; queue depth governs concurrency so we don't pay for idle capacity.
-- **Lambda** kept thin to minimize invocation cost and duration.
 - **CockroachDB** serves both run state and relational memory in one store.
 - **Vector index** uses the cheapest sufficient backend for a demo corpus, swappable later.
 
@@ -468,26 +273,23 @@ Optimized for **low AWS cost** and a **practical MVP/demo**:
 uv run fastapi dev
 ```
 
-## Scope
+## Scope — Not Built Yet
 
-This document is **design only**. Not yet implemented:
+This runtime is **design only** today. Not yet implemented:
 
-- Static Frontend
-- API Gateway + Lambda (Main Backend)
-- ECS Fargate deployment
-- Terraform
-- Docker production configuration
-- database migrations
-- Bedrock implementation
+- Bounded-context source under `src/` (the module layout above is the target)
+- ECS Fargate worker + SQS consumer
 - MCP layer (client + server for tools and memory)
-- actual tools (`get_log()`, `get_metric()`, `get_health()`)
-- Shared AgeMem: relational store + vector index
-- Demo Target wiring (read-only observation)
+- Agent Tooling (`get_log()`, `get_metric()`, `get_health()`)
+- Shared AgeMem: relational store + V1 vector index
+- Bedrock integration
+- CockroachDB schema + migrations
+- Docker production config
 
-> Future / optional (clearly not V1): remediation tools, additional MCP tools, managed vector DB migration, human-approval-gated actions.
+> Future / optional (not V1): remediation tools, additional MCP tools, managed vector DB migration, human-approval-gated actions.
 
-This README is the source of truth for the implementation phase.
+**Suggested first milestone:** `agent` + `memory` bounded contexts running locally with mocked Bedrock and an in-memory vector store — proves the orchestration loop and MCP boundary before any AWS infra.
 
 ## Execution-Time Guarantee
 
-The architecture supports a single Agent execution of **5–20 minutes** with many Bedrock calls and many tool calls, independent of any Lambda timeout: the API Lambda returns `202` within seconds, the run executes on ECS Fargate for as long as needed, and every step is persisted (Agent State) so it survives crashes and resumes via SQS redelivery.
+This runtime supports a single Agent execution of **5–20 minutes** with many Bedrock calls and many tool calls, independent of any Lambda timeout: the run executes on ECS Fargate for as long as needed, and every step is persisted (Agent State) so it survives crashes and resumes via SQS redelivery.
