@@ -30,7 +30,7 @@ Key decisions:
 
 ```text
 aws_cockroach/
-├── Readme.md                ← you are here (project overview)
+├── README.md                ← you are here (project overview)
 ├── Architecture.png         ← canonical architecture diagram
 └── apps/
     ├── agent_app/           ← Incident Pilot AI Agent — the Main Backend (Agent platform)
