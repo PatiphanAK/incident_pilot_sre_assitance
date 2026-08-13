@@ -14,7 +14,12 @@ runs later on the ECS Fargate worker (`apps/agent_app/backend_run`).
 > It lives as a **sibling to `backend_run/`** because `backend_run/README.md`
 > explicitly scopes the Lambda *out* of `backend_run/`, and `agent_app/README.md`
 > lists "API Gateway + Main Backend Lambda (command layer)" as part of the
-> platform not yet scaffolded. This module scaffolds it.
+> platform not yet scaffolded. This module implements it.
+>
+> **Status: implemented & locally verified.** Unit tests pass (`uv run pytest`,
+> 43 tests) and the FastAPI shim is exercised end-to-end with `curl`. The SAM
+> build / `sam local` / `sam deploy` paths require Docker / an AWS account and
+> are left for the operator to run.
 
 ## Stack
 
@@ -83,6 +88,53 @@ POST /runs
   lying `202` for an un-enqueued run. No internal details leak in the error
   envelope.
 
+### Validation rules (exact)
+
+Enforced by `validate_command()` in `validate.py`; all field problems in one
+pass so a client sees the complete picture in a single round-trip.
+
+| Field                         | Rule                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| top-level keys                | only `incident` (required), `session_id` (optional); unknown keys rejected           |
+| `incident.description`        | required, string, non-empty after strip, ≤ 4096 chars                                 |
+| `incident.severity`           | optional, one of `low medium high critical unknown` (default `unknown`); aliases below |
+| `incident.service`            | optional string/null, ≤ 256 chars; blank → `null`                                     |
+| `incident.region`             | optional string/null, ≤ 256 chars; blank → `null`                                     |
+| `incident.signals`            | optional array of strings; ≤ 64 entries; each non-empty, ≤ 256 chars; de-duped, order preserved |
+| `session_id`                  | optional string/null, ≤ 256 chars; blank → `null`                                     |
+
+`severity` aliases (lowercased before lookup, then normalized to canonical):
+
+```text
+warn | warning -> low      sev1 -> critical      sev2 -> high
+sev3 -> medium             sev4 | sev5 -> low
+```
+
+`X-Idempotency-Key` (optional header): must match `^[A-Za-z0-9._\-:]{1,128}$`.
+A valid key **overrides** the server `run_id` (client-controlled dedup). An
+absent or invalid key is ignored — the server generates a uuid4 `run_id`
+instead (invalid keys do **not** cause a `400`; idempotency is a client
+convenience, not a correctness requirement on the server side).
+
+### Example request
+
+```bash
+curl -X POST localhost:8000/runs \
+  -H 'Content-Type: application/json' \
+  -H 'X-Idempotency-Key: client-run-001' \
+  -d '{
+        "incident": {
+          "description": "high 5xx rate on checkout-api in us-east-1",
+          "severity": "high",
+          "service": "checkout-api",
+          "region": "us-east-1",
+          "signals": ["5xx-spike", "latency-p99", "5xx-spike"]
+        },
+        "session_id": "sess-demo"
+      }'
+# => 202 {"run_id":"client-run-001","status":"queued","submitted_at":"2026-08-06T14:00:00Z"}
+```
+
 ## SQS message contract (interface with the future ECS worker)
 
 Published by `sqs_publisher.py`, consumed later by `backend_run`'s worker:
@@ -124,7 +176,8 @@ Nothing else — no DB, no other SQS actions, no read access to other services.
 ## Local development
 
 The runtime code is stdlib-only; dev deps (pytest, fastapi, boto3) are
-installed by `uv` into a local venv.
+installed by `uv` into a local venv. `make <target>` wraps the common flows
+(see `Makefile`: `dev`, `test`, `build`, `local`, `invoke`, `deploy`).
 
 ```bash
 cd apps/agent_app/command_lambda
@@ -134,19 +187,24 @@ uv sync                         # install dev deps
 uv run pytest -q
 make test
 
-# 2) FastAPI shim (no Docker, no AWS) — reuses the exact validate+submit path
-uv run fastapi dev local_dev.py
+# 2) FastAPI shim (no Docker, no AWS) — reuses the exact validate+submit path.
+#    Zero-config: with SQS_QUEUE_URL unset, an in-memory recorder logs each
+#    enqueued message body (so you can eyeball the SQS contract). GET /health/live
+#    reports which publisher is active.
+uv run fastapi dev local_dev.py          # serves on :8000
+curl localhost:8000/health/live          # => {"status":"UP","publisher":"_RecordingPublisher"}
 curl -X POST localhost:8000/runs -H 'Content-Type: application/json' \
   -d '{"incident":{"description":"high 5xx on checkout"}}'
 # => 202 + run_id; the shim logs the enqueued message body.
-# Set SQS_QUEUE_URL to a real/LocalStack queue to verify a live send.
+# To verify a live send: export SQS_QUEUE_URL (and AWS_REGION) pointing at a
+# real or LocalStack queue, restart the shim, and re-run the curl.
 
 # 3) SAM local API (needs Docker) — full API Gateway → Lambda path
-sam build && sam local start-api
+sam build && sam local start-api        # serves on :3000
 curl -X POST localhost:3000/runs -H 'Content-Type: application/json' \
   -d '{"incident":{"description":"high 5xx on checkout","severity":"high"}}'
 
-# 3b) single invoke with a sample event
+# 3b) single invoke with the sample event (events/post_runs.json)
 sam build && sam local invoke CommandFunction --event events/post_runs.json
 ```
 
