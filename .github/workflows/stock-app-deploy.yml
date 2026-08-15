@@ -150,31 +150,24 @@ jobs:
       # ============================================================
       # ECS Task Definition
       # ============================================================
-
-      - name: Register task definition
+      - name: Register task definition (with the image just pushed)
         run: |
           set -euo pipefail
 
           echo "Rendering task definition..."
-
-          jq \
-            --arg image "$IMAGE" \
+          jq --arg image "$IMAGE" \
             '.containerDefinitions[0].image = $image' \
             "$APP_DIR/task-definition.json" \
             > /tmp/task-definition.rendered.json
 
           echo "Registering task definition..."
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --region "$REGION" \
+            --cli-input-json file:///tmp/task-definition.rendered.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
 
-          TASK_DEFINITION_ARN=$(
-            aws ecs create-task-definition \
-              --region "$REGION" \
-              --task-definition file:///tmp/task-definition.rendered.json \
-              --query 'taskDefinition.taskDefinitionArn' \
-              --output text
-          )
-
-          echo "Registered:"
-          echo "$TASK_DEFINITION_ARN"
+          echo "Registered: $TASK_DEF_ARN"
 
 
       # ============================================================
