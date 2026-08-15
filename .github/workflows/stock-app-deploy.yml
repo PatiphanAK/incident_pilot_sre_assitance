@@ -1,0 +1,149 @@
+# stock_app — full CI/CD loop (GitHub Actions -> ECR -> ECS Fargate).
+#
+#   push to main (stock_app files) or manual run
+#     -> go vet + go test                        (CI gate: broken code never ships)
+#     -> docker build + push to ECR              (tag = full commit SHA, immutable)
+#     -> register task definition with THAT image (task-definition.json's "image"
+#        is a placeholder; it is rendered here, so the stale-pin bug can't recur)
+#     -> stop the running task, run the new one  (single-task demo, no ALB)
+#     -> wait for RUNNING, print the public IP   (http://<ip>:8080/docs)
+#
+# AWS auth is OIDC (no stored keys): the runner assumes the stock-app-deploy role
+# via the GitHub OIDC provider. One-time setup in deploy.md ("CI/CD setup").
+
+name: stock_app deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/target_app/stock_app/**'
+      - '.github/workflows/stock-app-deploy.yml'
+  workflow_dispatch: {}
+
+# id-token: write is required for the OIDC assume-role; contents: read for checkout.
+permissions:
+  id-token: write
+  contents: read
+
+# One deploy at a time: a newer push supersedes an in-flight run instead of
+# racing it (two runs would stop/start the single task against each other).
+concurrency:
+  group: stock-app-deploy
+  cancel-in-progress: true
+
+env:
+  APP_DIR: apps/target_app/stock_app
+  ACCOUNT: '204936843729'
+  REGION: ap-southeast-1
+  CLUSTER: stock-cluster
+  ECR_REPO: stock-app
+  TASK_FAMILY: stock-app
+  DEPLOY_ROLE: stock-app-deploy
+  SUBNET: subnet-03cf78421c00c8c4b
+  SG: sg-0abdc6065c9434654
+
+jobs:
+  ci-cd:
+    name: test, build, deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail fast on unset deploy config
+        run: |
+          case "$SUBNET" in
+            ''|subnet-REPLACE_ME)
+              echo "::error::SUBNET is not set. Edit SUBNET in .github/workflows/stock-app-deploy.yml (public subnet for the Fargate task)."
+              exit 1 ;;
+          esac
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: ${{ env.APP_DIR }}/go.sum
+
+      # --- CI: gate on vet + tests, so a broken build never deploys ---
+      - name: go vet
+        working-directory: ${{ env.APP_DIR }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ env.APP_DIR }}
+        run: go test ./...
+
+      # --- CD: AWS via OIDC (no long-lived keys in GitHub Secrets) ---
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$REGION" \
+            | docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+
+      - name: Build and push image (tag = commit SHA, immutable)
+        run: |
+          IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO:${GITHUB_SHA}"
+          docker build -t "$IMAGE" "$APP_DIR"
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Register task definition (with the image just pushed)
+        run: |
+          # The JSON's "image" is a placeholder; render in the image this run
+          # built+pushed so the task def can never point at a stale pin again.
+          jq --arg image "$IMAGE" '.containerDefinitions[0].image = $image' \
+            "$APP_DIR/task-definition.json" > /tmp/task-definition.rendered.json
+          aws ecs create-task-definition \
+            --region "$REGION" \
+            --task-definition file:///tmp/task-definition.rendered.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text
+
+      - name: Deploy — stop the running task, start the new one
+        run: |
+          set -euo pipefail
+          # Stop any RUNNING task of this family (single-task demo; there should
+          # be at most one). --family scopes it, so other tasks in the cluster
+          # are never touched.
+          for arn in $(aws ecs list-tasks --region "$REGION" --cluster "$CLUSTER" \
+                         --family "$TASK_FAMILY" --desired-status RUNNING \
+                         --query 'taskArns[]' --output text); do
+            echo "Stopping old task: $arn"
+            aws ecs stop-task --region "$REGION" --cluster "$CLUSTER" --task "$arn"
+          done
+
+          NET="awsvpcConfiguration={subnets=[$SUBNET]"
+          [ -n "$SG" ] && NET="$NET,securityGroups=[$SG]"
+          NET="$NET,assignPublicIp=ENABLED}"
+
+          echo "Running new task from the latest $TASK_FAMILY revision"
+          TASK_ARN=$(aws ecs run-task \
+            --region "$REGION" --cluster "$CLUSTER" \
+            --task-definition "$TASK_FAMILY" \
+            --launch-type FARGATE \
+            --network-configuration "$NET" \
+            --query 'tasks[0].taskArn' --output text)
+
+          # Fail the deploy if the task never reaches RUNNING (bad image pull,
+          # missing secret, etc.) instead of silently leaving nothing running.
+          echo "Waiting for $TASK_ARN to reach RUNNING..."
+          aws ecs wait tasks-running --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          # Print where the app landed (public IP of the task's ENI).
+          ENI_ID=$(aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].attachments[?name=='eni'].details[?name=='networkInterfaceId'].value" \
+            --output text || true)
+          if [ -n "$ENI_ID" ] && [ "$ENI_ID" != "None" ]; then
+            PUBLIC_IP=$(aws ec2 describe-network-interfaces --region "$REGION" \
+              --network-interface-ids "$ENI_ID" \
+              --query 'NetworkInterfaces[0].Association.PublicIp' --output text || true)
+          fi
+          echo "task_arn=$TASK_ARN"
+          echo "health: http://${PUBLIC_IP:-<pending>}:8080/health"
+          echo "docs:   http://${PUBLIC_IP:-<pending>}:8080/docs"
