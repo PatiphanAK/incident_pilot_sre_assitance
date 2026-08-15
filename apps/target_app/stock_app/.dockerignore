@@ -1,0 +1,13 @@
+# Keep the image small and the build fast.
+.git
+.gitignore
+*.log
+/tmp
+# Source config that shouldn't ship in the image (loaded from the task env / Secrets).
+.env
+# Docs / deploy config (not needed inside the container).
+deploy.md
+task-definition.json
+Makefile
+Dockerfile
+.dockerignore

@@ -3,8 +3,6 @@ module stock_app
 go 1.26.5
 
 require (
-	github.com/akrylysov/algnhsa v1.1.0
-	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.43.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.37
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.5

@@ -1,52 +1,63 @@
+// Command stock_app runs the target application as a plain HTTP server — the
+// ECS Fargate container style. On SIGTERM/SIGINT (ECS task stop, or Ctrl-C) it
+// drains in-flight requests and stops the background workers before exiting.
 package main
 
 import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/akrylysov/algnhsa"
-	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/adaptor"
 
 	"stock_app/src/internal/observability"
 	"stock_app/src/internal/router"
 )
 
-var (
-	app           *fiber.App
-	lambdaHandler lambda.Handler
-)
-
-func init() {
+func main() {
 	observability.Configure()
 
-	app = fiber.New()
+	// ECS sends SIGTERM before stopping a task; treat it (and Ctrl-C) as shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 
-	deps, err := router.NewDependencies(context.Background())
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	app := fiber.New()
+	deps, err := router.NewDependencies(ctx)
 	if err != nil {
 		slog.Error("build dependencies", "error", err)
 		os.Exit(1)
 	}
+	defer deps.Shutdown()
 	router.Register(app, deps)
 
-	lambdaHandler = algnhsa.New(adaptor.FiberApp(app), nil)
-}
-
-func main() {
-	// Local run: `go run ./src/cmd` without AWS_LAMBDA_RUNTIME_API starts a plain HTTP server.
-	if os.Getenv("AWS_LAMBDA_RUNTIME_API") == "" {
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "8080"
-		}
+	// Serve until the listener fails or a shutdown signal arrives.
+	errCh := make(chan error, 1)
+	go func() {
 		slog.Info("stock_app listening", "port", port)
-		if err := app.Listen(":" + port); err != nil {
+		errCh <- app.Listen(":" + port)
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
 			slog.Error("listen", "error", err)
 			os.Exit(1)
 		}
-		return
+	case <-ctx.Done():
+		// Graceful drain: stop accepting new requests and finish in-flight ones.
+		// The metrics flusher / DB sampler (both tied to ctx) stop with the
+		// context; the deferred deps.Shutdown() then closes the DB pools.
+		slog.Info("shutdown signal received, draining")
+		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+			slog.Error("graceful shutdown", "error", err)
+		}
 	}
-	lambda.Start(lambdaHandler)
 }

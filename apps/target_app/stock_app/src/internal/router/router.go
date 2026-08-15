@@ -11,8 +11,12 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stock_app/src/internal/apidoc"
 	"stock_app/src/internal/auth"
 	"stock_app/src/internal/observability"
+	"stock_app/src/internal/order"
+	"stock_app/src/internal/order/adapters/outbound/stock" // package stockadapter
+	"stock_app/src/internal/stock"
 	"stock_app/src/internal/user"
 )
 
@@ -21,7 +25,21 @@ type Dependencies struct {
 	Pool    *pgxpool.Pool
 	Tokens  *auth.TokenService
 	User    *user.Module
+	Stock   *stock.Module
+	Order   *order.Module
 	Metrics *observability.Metrics
+
+	stockPool *pgxpool.Pool
+	orderPool *pgxpool.Pool
+}
+
+// Shutdown releases the infrastructure. The background workers (metrics flusher,
+// DB sampler) are tied to the context passed to NewDependencies, so they stop on
+// its cancellation (SIGTERM) without needing an explicit stop here.
+func (d *Dependencies) Shutdown() {
+	d.Pool.Close()
+	d.stockPool.Close()
+	d.orderPool.Close()
 }
 
 // NewDependencies creates the infrastructure connections (CockroachDB) and
@@ -44,6 +62,23 @@ func NewDependencies(ctx context.Context) (*Dependencies, error) {
 
 	userModule := user.NewModule(pool, tokens)
 
+	// Each module owns its own database. STOCK/ORDER_DATABASE_URL fall back to
+	// DATABASE_URL so a single-database setup still works; set them to the
+	// separate stock_db / order_db URLs for the prepared-to-split layout.
+	stockPool, err := pgxpool.New(ctx, envOr("STOCK_DATABASE_URL", databaseURL))
+	if err != nil {
+		return nil, fmt.Errorf("create stock pool: %w", err)
+	}
+	orderPool, err := pgxpool.New(ctx, envOr("ORDER_DATABASE_URL", databaseURL))
+	if err != nil {
+		return nil, fmt.Errorf("create order pool: %w", err)
+	}
+
+	stockModule := stock.NewModule(stockPool, tokens)
+	// The order module depends on the stock context in-process via its StockPort.
+	// stockadapter translates the stock context's errors into the order domain's.
+	orderModule := order.NewModule(orderPool, tokens, stockadapter.NewAdapter(stockModule.Service))
+
 	// Observability: structured logging + CloudWatch metrics. A nil publisher
 	// (no AWS_REGION) means metrics are emitted to the log stream instead.
 	metrics := observability.NewMetrics()
@@ -57,13 +92,33 @@ func NewDependencies(ctx context.Context) (*Dependencies, error) {
 			interval = d
 		}
 	}
-	observability.StartFlusher(context.Background(), metrics, publisher, interval)
+	// ctx here is the process's signal context: cancelling it (SIGTERM/SIGINT)
+	// stops the flusher and the DB sampler below.
+	observability.StartFlusher(ctx, metrics, publisher, interval)
+
+	// Per-database health sampling (CockroachDB): the observation bot's
+	// get_metric() can watch each database, not just HTTP.
+	dbInterval := 15 * time.Second
+	if v := os.Getenv("DB_SAMPLE_INTERVAL"); v != "" {
+		if d, e := time.ParseDuration(v); e == nil {
+			dbInterval = d
+		}
+	}
+	observability.StartDBSampler(ctx, []observability.NamedPinger{
+		{Database: "target_app", Pinger: pool},
+		{Database: "stock_db", Pinger: stockPool},
+		{Database: "order_db", Pinger: orderPool},
+	}, metrics, dbInterval)
 
 	return &Dependencies{
-		Pool:    pool,
-		Tokens:  tokens,
-		User:    userModule,
-		Metrics: metrics,
+		Pool:      pool,
+		Tokens:    tokens,
+		User:      userModule,
+		Stock:     stockModule,
+		Order:     orderModule,
+		Metrics:   metrics,
+		stockPool: stockPool,
+		orderPool: orderPool,
 	}, nil
 }
 
@@ -78,15 +133,22 @@ func envOr(key, def string) string {
 // Register mounts cross-cutting routes and delegates route registration to each module.
 func Register(app *fiber.App, deps *Dependencies) {
 	app.Use(observability.RequestMiddleware(deps.Metrics))
+	apidoc.RegisterRoutes(app)
 	app.Get("/health", health(deps))
 
 	api := app.Group("/api")
 	deps.User.RegisterRoutes(api)
+	deps.Stock.RegisterRoutes(api)
+	deps.Order.RegisterRoutes(api)
 }
 
 func health(deps *Dependencies) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		if err := deps.Pool.Ping(c.Context()); err != nil {
+		start := time.Now()
+		err := deps.Pool.Ping(c.Context())
+		// Real health checks also feed the DatabaseLatency / DatabaseUp metrics.
+		deps.Metrics.ObserveDatabase("target_app", time.Since(start), err)
+		if err != nil {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"status":   "unhealthy",
 				"database": "down",

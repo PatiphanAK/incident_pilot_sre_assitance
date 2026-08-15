@@ -17,6 +17,8 @@ Each service gets its own database, and the services stay decoupled — they tal
 | `003_add_password_hash.sql` | Adds the `password_hash` column (bcrypt) to `users` |
 | `004_create_stock_db.sql` | Creates the `stock_db` database |
 | `005_create_stock_tables.sql` | Creates `products` and `audit_logs` in `stock_db` |
+| `006_create_order_db.sql` | Creates the `order_db` database |
+| `007_create_order_tables.sql` | Creates `orders`, `order_items` and `audit_logs` in `order_db` |
 
 ## Rules
 
@@ -49,6 +51,8 @@ cockroach sql --url "$DATABASE_URL" -f migrations/002_create_users.sql
 cockroach sql --url "$DATABASE_URL" -f migrations/003_add_password_hash.sql
 cockroach sql --url "$DATABASE_URL" -f migrations/004_create_stock_db.sql
 cockroach sql --url "$DATABASE_URL" -f migrations/005_create_stock_tables.sql
+cockroach sql --url "$DATABASE_URL" -f migrations/006_create_order_db.sql
+cockroach sql --url "$DATABASE_URL" -f migrations/007_create_order_tables.sql
 ```
 
 ### Option C — local Docker CockroachDB
@@ -59,6 +63,8 @@ docker exec -i <container-name> cockroach sql --insecure < migrations/002_create
 docker exec -i <container-name> cockroach sql --insecure < migrations/003_add_password_hash.sql
 docker exec -i <container-name> cockroach sql --insecure < migrations/004_create_stock_db.sql
 docker exec -i <container-name> cockroach sql --insecure < migrations/005_create_stock_tables.sql
+docker exec -i <container-name> cockroach sql --insecure < migrations/006_create_order_db.sql
+docker exec -i <container-name> cockroach sql --insecure < migrations/007_create_order_tables.sql
 ```
 
 ## After running the migrations
@@ -76,6 +82,6 @@ DATABASE_URL='postgresql://root@localhost:26257/target_app?sslmode=disable'
 
 ## Adding a new migration (developers)
 
-Create the next numbered file (e.g. `006_add_orders.sql`), write idempotent SQL
+Create the next numbered file (e.g. `008_...`), write idempotent SQL
 (`IF NOT EXISTS`, fully qualified names), and run it in every environment
 (local Docker, CockroachCloud dev/prod) in order.

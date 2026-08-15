@@ -1,0 +1,35 @@
+{
+  "family": "stock-app",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "taskRoleArn": "REPLACE_TASK_ROLE_ARN",
+  "containerDefinitions": [
+    {
+      "name": "stock-app",
+      "image": "REPLACE_ACCOUNT.dkr.ecr.REPLACE_REGION.amazonaws.com/stock-app:latest",
+      "cpu": 256,
+      "memory": 512,
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "PORT", "value": "8080" },
+        { "name": "AWS_REGION", "value": "REPLACE_REGION" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "secret:stock-app/database-url" },
+        { "name": "JWT_SECRET", "valueFrom": "secret:stock-app/jwt-secret" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/stock-app",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "stock-app"
+        }
+      }
+    }
+  ]
+}
