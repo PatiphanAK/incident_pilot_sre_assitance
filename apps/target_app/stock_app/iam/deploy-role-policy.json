@@ -33,6 +33,15 @@
       "Effect": "Allow",
       "Action": ["ec2:DescribeNetworkInterfaces"],
       "Resource": "*"
+    },
+    {
+      "Sid": "PassEcsTaskRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::204936843729:role/stock-app-execution-role",
+        "arn:aws:iam::204936843729:role/stock-app-task-role"
+      ]
     }
   ]
 }
