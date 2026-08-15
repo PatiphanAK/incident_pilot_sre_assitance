@@ -1,5 +1,5 @@
 {
-  "Version": "2012-10-10",
+  "Version": "2012-10-17",
   "Statement": [
     {
       "Sid": "PullImageAndWriteLogs",
@@ -7,8 +7,8 @@
       "Action": [
         "ecr:GetAuthorizationToken",
         "ecr:BatchGetImage",
-        "ecr:BatchCheckAuthority",
-        "logs:CreateLogGroup",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
         "logs:CreateLogStream",
         "logs:PutLogEvents"
       ],

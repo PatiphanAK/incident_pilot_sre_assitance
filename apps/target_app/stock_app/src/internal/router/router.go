@@ -62,6 +62,17 @@ func NewDependencies(ctx context.Context) (*Dependencies, error) {
 
 	userModule := user.NewModule(pool, tokens)
 
+	// Surface a wrong-database / missing-schema misconfiguration at boot. The app
+	// still starts (so /health can report the state), but this ERROR log means the
+	// SRE agent sees the problem immediately instead of only after the first 500.
+	if err := userModule.Check(ctx); err != nil {
+		slog.Error("startup.schema_check_failed",
+			"database", "target_app",
+			"error", err.Error(),
+			"hint", "verify DATABASE_URL points at the database with the migrations applied (e.g. /target_app, not /defaultdb)",
+		)
+	}
+
 	// Each module owns its own database. STOCK/ORDER_DATABASE_URL fall back to
 	// DATABASE_URL so a single-database setup still works; set them to the
 	// separate stock_db / order_db URLs for the prepared-to-split layout.
@@ -152,6 +163,18 @@ func health(deps *Dependencies) fiber.Handler {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"status":   "unhealthy",
 				"database": "down",
+			})
+		}
+		// A connection can reach CockroachDB while pointed at the wrong database
+		// (e.g. defaultdb instead of target_app): the ping succeeds, but the app's
+		// tables are absent and every real request 500s. Verify the schema the app
+		// actually depends on so /health reports "down" instead of a false "up".
+		if sErr := deps.User.Check(c.Context()); sErr != nil {
+			slog.Error("health.schema_check_failed", "error", sErr.Error())
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"status":   "unhealthy",
+				"database": "down",
+				"reason":   "schema unavailable",
 			})
 		}
 		return c.JSON(fiber.Map{

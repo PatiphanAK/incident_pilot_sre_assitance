@@ -30,6 +30,25 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 // userColumns is the canonical SELECT list for users; scanUser relies on this order.
 const userColumns = "id, username, email, password_hash, created_at, updated_at"
 
+// PingSchema reports whether the users table actually exists in the connected
+// database. A connection can reach CockroachDB (Pool.Ping succeeds) while
+// pointing at the wrong database — e.g. defaultdb instead of target_app — in
+// which case the table is absent and every real query fails with
+// "relation users does not exist" (SQLSTATE 42P01). /health and startup use
+// this so that situation surfaces as a failure instead of a false "up".
+func (r *UserRepository) PingSchema(ctx context.Context) error {
+	var exists bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users')`,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("schema unavailable: users table not found in the connected database")
+	}
+	return nil
+}
+
 func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO users (id, username, email, password_hash, created_at, updated_at)

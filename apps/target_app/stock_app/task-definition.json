@@ -4,29 +4,45 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
   "memory": "512",
-  "taskRoleArn": "REPLACE_TASK_ROLE_ARN",
+  "executionRoleArn": "arn:aws:iam::204936843729:role/stock-app-execution-role",
+  "taskRoleArn": "arn:aws:iam::204936843729:role/stock-app-task-role",
   "containerDefinitions": [
     {
       "name": "stock-app",
-      "image": "REPLACE_ACCOUNT.dkr.ecr.REPLACE_REGION.amazonaws.com/stock-app:latest",
+      "image": "204936843729.dkr.ecr.ap-southeast-1.amazonaws.com/stock-app:latest",
       "cpu": 256,
       "memory": 512,
       "portMappings": [
-        { "containerPort": 8080, "protocol": "tcp" }
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
       ],
       "environment": [
-        { "name": "PORT", "value": "8080" },
-        { "name": "AWS_REGION", "value": "REPLACE_REGION" }
+        {
+          "name": "PORT",
+          "value": "8080"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "ap-southeast-1"
+        }
       ],
       "secrets": [
-        { "name": "DATABASE_URL", "valueFrom": "secret:stock-app/database-url" },
-        { "name": "JWT_SECRET", "valueFrom": "secret:stock-app/jwt-secret" }
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:database-url::"
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:jwt-secret::"
+        }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/stock-app",
-          "awslogs-region": "REPLACE_REGION",
+          "awslogs-region": "ap-southeast-1",
           "awslogs-stream-prefix": "stock-app"
         }
       }

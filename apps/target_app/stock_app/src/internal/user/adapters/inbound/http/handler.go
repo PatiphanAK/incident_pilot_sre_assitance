@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	netmail "net/mail"
 
 	"github.com/gofiber/fiber/v3"
@@ -176,6 +177,16 @@ func (h *Handler) mapError(c fiber.Ctx, err error) error {
 	case errors.Is(err, domain.ErrInvalidCredentials):
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 	default:
+		// Unexpected/internal error. The raw error (e.g. a CockroachDB message
+		// like 'relation "users" does not exist') is logged at ERROR level so the
+		// SRE agent can see the real cause via get_log(), but it is NOT returned
+		// to the client: the response stays a generic 500. The error string from a
+		// query never carries credentials, and we never log DATABASE_URL or a DSN.
+		slog.Error("http.request.internal_error",
+			"method", c.Method(),
+			"path", c.Path(),
+			"error", err.Error(),
+		)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
 	}
 }
