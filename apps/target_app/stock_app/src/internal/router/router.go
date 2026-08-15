@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stock_app/src/internal/auth"
@@ -49,10 +50,22 @@ func NewDependencies(ctx context.Context) (*Dependencies, error) {
 
 // Register mounts cross-cutting routes and delegates route registration to each module.
 func Register(app *fiber.App, deps *Dependencies) {
+	// เปิดทางให้ Frontend จากพอร์ต 5173 ยิง API เข้ามาได้
+	app.Use(cors.New())
+
 	app.Get("/health", health(deps))
 
 	api := app.Group("/api")
 	deps.User.RegisterRoutes(api)
+
+	// 👉 เพิ่มเส้นทางสำหรับจัดการ Order ตรงนี้ครับ
+	api.Post("/orders", func(c fiber.Ctx) error {
+		// จำลองการสั่งซื้อสำเร็จและตัดสต็อก
+		return c.JSON(fiber.Map{
+			"message": "Order placed successfully",
+			"status":  "success",
+		})
+	})
 }
 
 func health(deps *Dependencies) fiber.Handler {

@@ -1,0 +1,18 @@
+service: target-go-backend
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: provided.al2023 # ใช้ OS ใหม่ล่าสุดของ AWS สำหรับรัน Go
+  architecture: arm64
+  region: ap-southeast-1 # สิงคโปร์
+  environment:
+    # ดึงค่าจากไฟล์ .env ในเครื่องตอนสั่ง Deploy
+    DATABASE_URL: ${env:DATABASE_URL}
+    JWT_SECRET: ${env:JWT_SECRET}
+
+functions:
+  api:
+    handler: bootstrap # ชื่อไฟล์ตอน Build เสร็จ
+    events:
+      - httpApi: '*' # รับทุก Path ที่ยิงเข้ามา
