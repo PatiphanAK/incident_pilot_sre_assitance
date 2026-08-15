@@ -74,6 +74,16 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: go test ./...
 
+      - name: Debug GitHub context
+        run: |
+          echo "repository=$GITHUB_REPOSITORY"
+          echo "ref=$GITHUB_REF"
+          echo "event=$GITHUB_EVENT_NAME"
+          echo "workflow=$GITHUB_WORKFLOW"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+
       # --- CD: AWS via OIDC (no long-lived keys in GitHub Secrets) ---
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
