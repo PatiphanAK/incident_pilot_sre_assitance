@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/akrylysov/algnhsa"
@@ -10,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 
+	"stock_app/src/internal/observability"
 	"stock_app/src/internal/router"
 )
 
@@ -19,11 +20,14 @@ var (
 )
 
 func init() {
+	observability.Configure()
+
 	app = fiber.New()
 
 	deps, err := router.NewDependencies(context.Background())
 	if err != nil {
-		log.Fatalf("build dependencies: %v", err)
+		slog.Error("build dependencies", "error", err)
+		os.Exit(1)
 	}
 	router.Register(app, deps)
 
@@ -37,9 +41,10 @@ func main() {
 		if port == "" {
 			port = "8080"
 		}
-		log.Printf("stock_app listening on :%s", port)
+		slog.Info("stock_app listening", "port", port)
 		if err := app.Listen(":" + port); err != nil {
-			log.Fatalf("listen: %v", err)
+			slog.Error("listen", "error", err)
+			os.Exit(1)
 		}
 		return
 	}
