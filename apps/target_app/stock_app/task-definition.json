@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "stock-app",
-      "image": "8872440b36903d3dcb6b42aa3df258f54386a30c",
+      "image": "REPLACE_WITH_ECR_IMAGE (rendered by the CI/CD workflow and `make register` — do not hand-edit)",
       "cpu": 256,
       "memory": 512,
       "portMappings": [

@@ -6,7 +6,9 @@
 # so the targets work no matter where `make` is invoked from.
 #
 # Before running a deploy target, set these (via export, or `make VAR=value`):
-#     ACCOUNT  REGION  CLUSTER  SUBNET  EXEC_ROLE  TASK_ROLE
+#     ACCOUNT  REGION  CLUSTER  SUBNET
+# (The IAM role ARNs and execution/task roles live in task-definition.json, so
+#  register/run read them from there instead of taking ARNs as flags.)
 # The defaults below are REPLACE_* placeholders — no real values are hard-coded.
 
 # Directory that holds this Makefile, so file refs + build context are
@@ -45,12 +47,15 @@ push:
 	docker push $(IMG)
 
 # --- register the task definition (ARNs + secret refs live in task-definition.json) ---
+# The file's "image" is a placeholder; render in the freshly built $(IMG) via jq so
+# the registered def always runs the image `make build` produced (no stale pin).
 .PHONY: register
 register:
+	jq --arg img "$(IMG)" '.containerDefinitions[0].image = $$img' \
+		$(MAKEFILE_DIR)/task-definition.json > /tmp/stock-app-task-definition.json
 	aws ecs create-task-definition \
-		--family $(TASK) \
-		--network-mode awsvpc \
-		--container-definitions file://$(MAKEFILE_DIR)/task-definition.json
+		--region $(REGION) \
+		--task-definition file:///tmp/stock-app-task-definition.json
 
 # --- run (cheapest: a single task, no ALB) ---
 # A public IP + a security group that allows :8080 makes it reachable without an ALB.
@@ -59,11 +64,11 @@ register:
 .PHONY: run
 run:
 	aws ecs run-task \
+		--region $(REGION) \
 		--cluster $(CLUSTER) \
 		--task-definition $(TASK) \
-		--task-execution-role-arn $(EXEC_ROLE) \
 		--launch-type FARGATE \
-		--network-configuration "awsvpcConfiguration={\"awsvpcConfiguration\":{\"subnets\":[\"$(SUBNET)\"],\"assignPublicIp\":\"ENABLED\"}}"
+		--network-configuration "awsvpcConfiguration={subnets=[$(SUBNET)],assignPublicIp=ENABLED}"
 
 # --- stop a task (MANUAL; requires TASK_ID, so it can never fire by accident) ---
 .PHONY: stop

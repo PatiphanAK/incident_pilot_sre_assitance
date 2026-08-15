@@ -53,7 +53,7 @@ func RegisterRoutes(router fiber.Router, h *Handler) {
 	users.Delete("/:id", h.Delete)
 }
 
-// Register handles POST /api/auth/register
+// Register handles POST /api/v1/auth/register
 func (h *Handler) Register(c fiber.Ctx) error {
 	var req registerRequest
 	if err := c.Bind().Body(&req); err != nil {
@@ -75,7 +75,7 @@ func (h *Handler) Register(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(user)
 }
 
-// Login handles POST /api/auth/login and returns a signed bearer token.
+// Login handles POST /api/v1/auth/login and returns a signed bearer token.
 func (h *Handler) Login(c fiber.Ctx) error {
 	var req loginRequest
 	if err := c.Bind().Body(&req); err != nil {
@@ -92,7 +92,7 @@ func (h *Handler) Login(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"token": token, "user": user})
 }
 
-// Me handles GET /api/auth/me for the user identified by the bearer token.
+// Me handles GET /api/v1/auth/me for the user identified by the bearer token.
 func (h *Handler) Me(c fiber.Ctx) error {
 	userID, _ := c.Locals("userID").(string)
 	user, err := h.service.GetUser(c.Context(), userID)
@@ -102,7 +102,7 @@ func (h *Handler) Me(c fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// Create handles POST /api/users
+// Create handles POST /api/v1/users
 func (h *Handler) Create(c fiber.Ctx) error {
 	req, err := h.bind(c)
 	if err != nil {
@@ -115,7 +115,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(user)
 }
 
-// Get handles GET /api/users/:id
+// Get handles GET /api/v1/users/:id
 func (h *Handler) Get(c fiber.Ctx) error {
 	user, err := h.service.GetUser(c.Context(), c.Params("id"))
 	if err != nil {
@@ -124,7 +124,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// List handles GET /api/users
+// List handles GET /api/v1/users
 func (h *Handler) List(c fiber.Ctx) error {
 	users, err := h.service.ListUsers(c.Context())
 	if err != nil {
@@ -133,7 +133,7 @@ func (h *Handler) List(c fiber.Ctx) error {
 	return c.JSON(users)
 }
 
-// Update handles PUT /api/users/:id
+// Update handles PUT /api/v1/users/:id
 func (h *Handler) Update(c fiber.Ctx) error {
 	req, err := h.bind(c)
 	if err != nil {
@@ -146,7 +146,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// Delete handles DELETE /api/users/:id
+// Delete handles DELETE /api/v1/users/:id
 func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.service.DeleteUser(c.Context(), c.Params("id")); err != nil {
 		return h.mapError(c, err)

@@ -147,7 +147,9 @@ func Register(app *fiber.App, deps *Dependencies) {
 	apidoc.RegisterRoutes(app)
 	app.Get("/health", health(deps))
 
-	api := app.Group("/api")
+	// API versioned under /api/v1: every module's routes are mounted on this
+	// group, so a future /api/v2 can be added alongside without moving v1.
+	api := app.Group("/api/v1")
 	deps.User.RegisterRoutes(api)
 	deps.Stock.RegisterRoutes(api)
 	deps.Order.RegisterRoutes(api)

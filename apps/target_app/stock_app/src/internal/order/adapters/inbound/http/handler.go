@@ -33,7 +33,7 @@ func RegisterRoutes(router fiber.Router, h *Handler) {
 	orders.Get("/:id", h.Get)
 }
 
-// Place handles POST /api/orders — reserves stock for every line (in-process) and
+// Place handles POST /api/v1/orders — reserves stock for every line (in-process) and
 // creates the order.
 func (h *Handler) Place(c fiber.Ctx) error {
 	var req placeOrderRequest
@@ -56,7 +56,7 @@ func (h *Handler) Place(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(order)
 }
 
-// Get handles GET /api/orders/:id
+// Get handles GET /api/v1/orders/:id
 func (h *Handler) Get(c fiber.Ctx) error {
 	order, err := h.service.GetOrder(c.Context(), c.Params("id"))
 	if err != nil {
@@ -65,7 +65,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 	return c.JSON(order)
 }
 
-// List handles GET /api/orders
+// List handles GET /api/v1/orders
 func (h *Handler) List(c fiber.Ctx) error {
 	orders, err := h.service.ListOrders(c.Context())
 	if err != nil {

@@ -8,7 +8,7 @@ info:
     single ECS Fargate container.
 
     **How to use this page:**
-    1. `POST /api/auth/register` (public), then `POST /api/auth/login` — copy the `token`.
+    1. `POST /api/v1/auth/register` (public), then `POST /api/v1/auth/login` — copy the `token`.
     2. Click the **Authorize** button, paste the token, confirm.
     3. Create products, reserve stock, and place orders (placing an order
        reserves stock in-process across the stock/order databases).
@@ -49,7 +49,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/auth/register:
+  /api/v1/auth/register:
     post:
       tags: [auth]
       summary: Register a user (public)
@@ -71,7 +71,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/auth/login:
+  /api/v1/auth/login:
     post:
       tags: [auth]
       summary: Login and get a bearer token (public)
@@ -93,7 +93,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/auth/me:
+  /api/v1/auth/me:
     get:
       tags: [auth]
       summary: The user identified by the bearer token
@@ -114,7 +114,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/users:
+  /api/v1/users:
     get:
       tags: [users]
       summary: List users
@@ -146,7 +146,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/users/{id}:
+  /api/v1/users/{id}:
     parameters:
       - name: id
         in: path
@@ -197,7 +197,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/stock/products:
+  /api/v1/stock/products:
     get:
       tags: [stock]
       summary: List products
@@ -229,7 +229,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/stock/products/{id}:
+  /api/v1/stock/products/{id}:
     parameters:
       - name: id
         in: path
@@ -250,7 +250,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/stock/products/{id}/reserve:
+  /api/v1/stock/products/{id}/reserve:
     parameters:
       - name: id
         in: path
@@ -261,7 +261,7 @@ paths:
       summary: Reserve stock (decrement quantity)
       description: |
         Manual/testing entry point. The order context reserves in-process instead
-        (POST /api/orders) — this is the same underlying call.
+        (POST /api/v1/orders) — this is the same underlying call.
       requestBody:
         required: true
         content:
@@ -289,7 +289,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/orders:
+  /api/v1/orders:
     get:
       tags: [orders]
       summary: List orders
@@ -331,7 +331,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /api/orders/{id}:
+  /api/v1/orders/{id}:
     parameters:
       - name: id
         in: path
@@ -358,7 +358,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 'Paste the token from POST /api/auth/login (24h TTL).'
+      description: 'Paste the token from POST /api/v1/auth/login (24h TTL).'
 
   schemas:
     User:

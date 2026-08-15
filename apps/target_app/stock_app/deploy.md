@@ -4,8 +4,50 @@ This deploys the target app as a **single ECS Fargate task** — no ALB, no serv
 autoscaling, pay-per-second. That is the cheapest way to run it, and it stops
 paying the moment you stop the task.
 
-> These are the files to use (`Dockerfile`, `task-definition.json`, `Makefile`).
-> Nothing here is auto-deployed — you run the commands.
+> **CI/CD:** `.github/workflows/stock-app-deploy.yml` deploys automatically on
+> push to `main` (stock_app files) — see "Auto-deploy via GitHub Actions" below.
+> The manual path still works (`Dockerfile`, `task-definition.json`, `Makefile`),
+> and `make register` now renders the built image, so there is no stale pin.
+
+## Auto-deploy via GitHub Actions (CI/CD)
+
+`.github/workflows/stock-app-deploy.yml` runs the full loop automatically:
+
+- **Triggers:** push to `main` touching `apps/target_app/stock_app/**`, or the
+  manual **Run workflow** button (Actions → *stock_app deploy* → *Run workflow*).
+- **Does:** `go vet` + `go test` (gate — broken code never ships) → `docker
+  build` + push to ECR (tag = **full commit SHA**, immutable) →
+  `create-task-definition` with **that** image → stop the running task + run the
+  new one → print the public IP and `http://<ip>:8080/docs`.
+- Because it renders the image into the task def at register time, the stale-pin
+  bug from before can't recur.
+
+### One-time setup (OIDC — no stored AWS keys)
+
+1. Create the OIDC provider + deploy role (account `204936843729`, region
+   `ap-southeast-1`):
+   ```bash
+   # 1a. OIDC provider for GitHub Actions (idempotent)
+   aws iam create-open-id-connect-provider \
+     --url https://token.actions.githubusercontent.com \
+     --client-ids sts.amazonaws.com 2>/dev/null || true
+
+   # 1b. The deploy role GitHub assumes (trust = this repo's OIDC subject)
+   aws iam create-role --role-name stock-app-deploy \
+     --assume-role-policy-document file://apps/target_app/stock_app/iam/oidc-trust-policy.json
+
+   # 1c. Its permissions (ECR push + ECS deploy + read the task's public IP)
+   aws iam put-role-policy --role-name stock-app-deploy --policy-name deploy \
+     --policy-document file://apps/target_app/stock_app/iam/deploy-role-policy.json
+   ```
+2. In the workflow, set `SUBNET` (a public subnet for the Fargate task) and,
+   optionally, `SG` (a security group allowing inbound `:8080`; leave empty to use
+   the subnet's default SG, which must then allow `:8080`).
+3. Push to `main` — the pipeline deploys. The deploy role is least-privilege
+   (only ECR push, the ECS register/run/stop/list/describe actions, and
+   `ec2:DescribeNetworkInterfaces`); no long-lived keys live in GitHub.
+
+The API is versioned under `/api/v1` and the docs page is at `/docs`.
 
 ## 1. The cheapest config (what we shipped)
 
@@ -43,17 +85,23 @@ Rough cost (us-east-1, **0.125 vCPU / 256 MiB**): ~$0.006/hr → ~$4.50 if left
 
 ```bash
 cd apps/target_app/stock_app
-export ACCOUNT=123456789012 REGION=us-east-1 CLUSTER=demo-cluster
-# edit task-definition.json: REPLACE_ACCOUNT / REPLACE_REGION / REPLACE_TASK_ROLE_ARN
-
-make iam        # create execution + task roles (once); then set EXEC_ROLE + taskRoleArn
-make build      # docker build -t $IMG .
+export ACCOUNT=123456789012 REGION=ap-southeast-1 CLUSTER=demo-cluster SUBNET=subnet-xxxx
+make iam        # create the execution + task IAM roles (once)
+make login      # docker login to ECR (session creds)
+make build      # docker build -t $IMG .   (tag = short git SHA)
 make push       # docker push $IMG
-make register   # aws ecs create-task-definition ...
+make register   # render $IMG into task-definition.json, then create-task-definition
 make run        # aws ecs run-task ... (public IP, no ALB)
 ```
 
-The app listens on `:8080`; `/health` reports DB up/down.
+- `make register` renders the image `make build` tagged into
+  `task-definition.json` (its `image` field is a placeholder), so the registered
+  def runs your build — never a stale pin. Needs `jq`.
+- `make run` uses `--task-definition stock-app` (latest revision); the execution
+  role is in the task def, so it is no longer passed as a flag.
+
+The app listens on `:8080`; `/health` reports DB up/down, the API is under
+`/api/v1`, and the docs are at `/docs`.
 
 ## 4. When the demo is over
 

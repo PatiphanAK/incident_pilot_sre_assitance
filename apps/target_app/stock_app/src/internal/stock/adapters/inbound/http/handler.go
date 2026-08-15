@@ -39,7 +39,7 @@ func RegisterRoutes(router fiber.Router, h *Handler) {
 	products.Post("/:id/reserve", h.Reserve)
 }
 
-// Create handles POST /api/stock/products
+// Create handles POST /api/v1/stock/products
 func (h *Handler) Create(c fiber.Ctx) error {
 	var req createProductRequest
 	if err := c.Bind().Body(&req); err != nil {
@@ -55,7 +55,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(p)
 }
 
-// Get handles GET /api/stock/products/:id
+// Get handles GET /api/v1/stock/products/:id
 func (h *Handler) Get(c fiber.Ctx) error {
 	p, err := h.service.GetProduct(c.Context(), c.Params("id"))
 	if err != nil {
@@ -64,7 +64,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 	return c.JSON(p)
 }
 
-// List handles GET /api/stock/products
+// List handles GET /api/v1/stock/products
 func (h *Handler) List(c fiber.Ctx) error {
 	products, err := h.service.ListProducts(c.Context())
 	if err != nil {
@@ -73,7 +73,7 @@ func (h *Handler) List(c fiber.Ctx) error {
 	return c.JSON(products)
 }
 
-// Reserve handles POST /api/stock/products/:id/reserve — decrements a product's
+// Reserve handles POST /api/v1/stock/products/:id/reserve — decrements a product's
 // quantity (mainly a manual/testing entry point; the order context reserves
 // in-process instead).
 func (h *Handler) Reserve(c fiber.Ctx) error {
