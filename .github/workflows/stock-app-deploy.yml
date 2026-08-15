@@ -99,35 +99,6 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: go test ./...
 
-
-      # ============================================================
-      # Debug GitHub context
-      # ============================================================
-      # Safe debug information.
-      # DO NOT print the OIDC token itself.
-
-      - name: Debug GitHub context
-        run: |
-          echo "repository=$GITHUB_REPOSITORY"
-          echo "ref=$GITHUB_REF"
-          echo "event=$GITHUB_EVENT_NAME"
-          echo "workflow=$GITHUB_WORKFLOW"
-
-      - name: Debug GitHub OIDC claims
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('sts.amazonaws.com');
-            const payload = JSON.parse(
-              Buffer.from(token.split('.')[1], 'base64url').toString()
-            );
-
-            console.log("repository:", payload.repository);
-            console.log("repository_id:", payload.repository_id);
-            console.log("repository_owner:", payload.repository_owner);
-            console.log("repository_owner_id:", payload.repository_owner_id);
-            console.log("sub:", payload.sub);
-            console.log("aud:", payload.aud);
       # ============================================================
       # AWS Authentication
       # ============================================================
