@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrOrderNotFound     = errors.New("order not found")
-	ErrInsufficientStock = errors.New("insufficient stock")
-	ErrProductNotFound   = errors.New("product not found")
+	ErrOrderNotFound           = errors.New("order not found")
+	ErrInsufficientStock       = errors.New("insufficient stock")
+	ErrProductNotFound         = errors.New("product not found")
+	ErrInvalidStatusTransition = errors.New("invalid status transition")
 )
 
 // Order status values.
@@ -63,6 +64,13 @@ type OrderRepository interface {
 	Create(ctx context.Context, o *Order) error
 	GetByID(ctx context.Context, id string) (*Order, error)
 	List(ctx context.Context) ([]Order, error)
+	// UpdateStatus sets the order's status. It returns ErrOrderNotFound when the
+	// order does not exist. Transition rules are enforced by the application layer,
+	// not here.
+	UpdateStatus(ctx context.Context, id string, status string) error
+	// Delete removes the order and its items (one transaction, same database). It
+	// returns ErrOrderNotFound when the order does not exist.
+	Delete(ctx context.Context, id string) error
 }
 
 // StockPort is the in-process dependency on the stock context. It is satisfied by

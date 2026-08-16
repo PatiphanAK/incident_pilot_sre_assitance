@@ -23,22 +23,31 @@ func NewStockService(repo domain.ProductRepository) *StockService {
 	return &StockService{repo: repo}
 }
 
-// CreateProduct creates a product with the given name, initial quantity, and price.
-func (s *StockService) CreateProduct(ctx context.Context, name string, quantity int, price float64) (*domain.Product, error) {
+// CreateProduct creates a product with the given sku, name, description, initial
+// quantity, and price. The sku must be unique (ErrSKUExists otherwise).
+func (s *StockService) CreateProduct(ctx context.Context, sku, name, description string, quantity int, price float64) (*domain.Product, error) {
+	if sku == "" {
+		return nil, errors.New("sku is required")
+	}
 	if name == "" {
 		return nil, errors.New("name is required")
 	}
 	if quantity < 0 {
 		return nil, errors.New("quantity must be non-negative")
 	}
+	if price < 0 {
+		return nil, errors.New("price must be non-negative")
+	}
 	now := time.Now().UTC()
 	p := &domain.Product{
-		ID:        uuid.NewString(),
-		Name:      name,
-		Quantity:  quantity,
-		Price:     price,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          uuid.NewString(),
+		SKU:         sku,
+		Name:        name,
+		Description: description,
+		Quantity:    quantity,
+		Price:       price,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, err
@@ -54,6 +63,28 @@ func (s *StockService) ListProducts(ctx context.Context) ([]domain.Product, erro
 // GetProduct returns a product by id.
 func (s *StockService) GetProduct(ctx context.Context, id string) (*domain.Product, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+// UpdateProduct updates a product's name and/or description (each only when
+// non-nil) and its price, and returns the updated product.
+func (s *StockService) UpdateProduct(ctx context.Context, id string, name, description *string, price float64) (*domain.Product, error) {
+	if price < 0 {
+		return nil, errors.New("price must be non-negative")
+	}
+	return s.repo.Update(ctx, id, name, description, price)
+}
+
+// DeleteProduct removes a product (its stock row goes with it).
+func (s *StockService) DeleteProduct(ctx context.Context, id string) error {
+	return s.repo.Delete(ctx, id)
+}
+
+// SetQuantity sets a product's quantity to the given absolute value.
+func (s *StockService) SetQuantity(ctx context.Context, id string, quantity int) error {
+	if quantity < 0 {
+		return errors.New("quantity must be non-negative")
+	}
+	return s.repo.SetQuantity(ctx, id, quantity)
 }
 
 // Reserve decrements `quantity` units of the product and returns its current unit

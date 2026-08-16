@@ -10,8 +10,9 @@ info:
     **How to use this page:**
     1. `POST /api/v1/auth/register` (public), then `POST /api/v1/auth/login` — copy the `token`.
     2. Click the **Authorize** button, paste the token, confirm.
-    3. Create products, reserve stock, and place orders (placing an order
-       reserves stock in-process across the stock/order databases).
+    3. Create and manage products (full CRUD, plus absolute stock sets), and
+       manage orders: placing an order reserves stock in-process across the
+       stock/order databases; cancelling it releases the reserved stock.
 servers:
   - url: /
     description: This server (same origin as the docs page)
@@ -228,6 +229,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: SKU already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/stock/products/{id}:
     parameters:
@@ -246,6 +252,77 @@ paths:
               schema: { $ref: '#/components/schemas/Product' }
         '404':
           description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [stock]
+      summary: Update a product (partial)
+      description: |
+        name and description are optional (the current value is kept when absent);
+        price is required — the update always sets it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProductRequest' }
+      responses:
+        '200':
+          description: The updated product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400':
+          description: Invalid body / validation (e.g. price missing or negative)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [stock]
+      summary: Delete a product
+      description: The product's inventory row is removed with it (database-level cascade).
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/stock/products/{id}/inventory:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [stock]
+      summary: Set a product's stock (absolute)
+      description: Sets the quantity to the given absolute value (not a delta).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetQuantityRequest' }
+      responses:
+        '200':
+          description: The new stock level
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SetQuantityResponse' }
+        '400':
+          description: Invalid body / quantity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Product not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -351,6 +428,48 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [orders]
+      summary: Update an order's status
+      description: |
+        Allowed transitions: PENDING -> PAID | CANCELLED, PAID -> SHIPPED |
+        CANCELLED. SHIPPED and CANCELLED are terminal; the same status or any
+        other target is a 400. Cancelling releases the order's reserved stock.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOrderRequest' }
+      responses:
+        '200':
+          description: The updated order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400':
+          description: Invalid body / invalid status transition
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [orders]
+      summary: Delete an order (hard delete)
+      description: |
+        Removes the order and its items. It does NOT release stock — cancel
+        (PATCH with status CANCELLED) is the business operation that does that.
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 components:
   securitySchemes:
@@ -374,8 +493,14 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        sku: { type: string }
         name: { type: string }
-        quantity: { type: integer }
+        description:
+          type: string
+          nullable: true
+        quantity:
+          type: integer
+          description: Stock on hand (from the one-to-one inventory table).
         price: { type: number, format: double }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -427,11 +552,56 @@ components:
 
     CreateProductRequest:
       type: object
-      required: [name]
+      required: [sku, name, price]
       properties:
+        sku: { type: string, minLength: 1 }
         name: { type: string, minLength: 1 }
+        description: { type: string }
         quantity: { type: integer, minimum: 0, default: 0 }
-        price: { type: number, format: double, minimum: 0, default: 0 }
+        price: { type: number, format: double, minimum: 0 }
+
+    UpdateProductRequest:
+      type: object
+      required: [price]
+      properties:
+        name:
+          type: string
+          description: Optional — only updated when provided (current value kept otherwise).
+        description:
+          type: string
+          description: Optional — only updated when provided (current value kept otherwise).
+        price:
+          type: number
+          format: double
+          minimum: 0
+          description: Required — the update always sets the price; send the current value if unchanged.
+
+    SetQuantityRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+          description: Absolute stock level (not a delta).
+
+    SetQuantityResponse:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        quantity: { type: integer }
+
+    UpdateOrderRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [PENDING, PAID, SHIPPED, CANCELLED]
+          description: |
+            Target status. Allowed transitions: PENDING -> PAID | CANCELLED,
+            PAID -> SHIPPED | CANCELLED. SHIPPED and CANCELLED are terminal.
+            Cancelling releases the order's reserved stock.
 
     ReserveRequest:
       type: object

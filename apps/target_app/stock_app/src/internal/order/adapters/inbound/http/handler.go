@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -20,8 +21,12 @@ func NewHandler(service *application.OrderService, tokens *auth.TokenService) *H
 }
 
 type placeOrderRequest struct {
-	UserID string                `json:"user_id" form:"user_id"`
+	UserID string                  `json:"user_id" form:"user_id"`
 	Items  []domain.OrderItemInput `json:"items"`
+}
+
+type updateOrderRequest struct {
+	Status string `json:"status" form:"status"`
 }
 
 // RegisterRoutes mounts the order routes (behind the bearer-token middleware) on
@@ -31,6 +36,8 @@ func RegisterRoutes(router fiber.Router, h *Handler) {
 	orders.Post("/", h.Place)
 	orders.Get("/", h.List)
 	orders.Get("/:id", h.Get)
+	orders.Patch("/:id", h.Update)
+	orders.Delete("/:id", h.Delete)
 }
 
 // Place handles POST /api/v1/orders — reserves stock for every line (in-process) and
@@ -74,15 +81,48 @@ func (h *Handler) List(c fiber.Ctx) error {
 	return c.JSON(orders)
 }
 
+// Update handles PATCH /api/v1/orders/:id — moves the order to a new status.
+// Cancelling releases the order's reserved stock in-process.
+func (h *Handler) Update(c fiber.Ctx) error {
+	var req updateOrderRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if req.Status == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "status is required"})
+	}
+	order, err := h.service.UpdateOrderStatus(c.Context(), c.Params("id"), req.Status)
+	if err != nil {
+		return h.mapError(c, err)
+	}
+	return c.JSON(order)
+}
+
+// Delete handles DELETE /api/v1/orders/:id — hard-deletes the order and its items.
+func (h *Handler) Delete(c fiber.Ctx) error {
+	if err := h.service.DeleteOrder(c.Context(), c.Params("id")); err != nil {
+		return h.mapError(c, err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h *Handler) mapError(c fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrOrderNotFound):
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, domain.ErrInvalidStatusTransition):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, domain.ErrInsufficientStock):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, domain.ErrProductNotFound):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "product not found"})
 	default:
+		slog.Error(
+			"unhandled application error",
+			"error", err,
+			"path", c.Path(),
+			"method", c.Method(),
+		)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
 	}
 }

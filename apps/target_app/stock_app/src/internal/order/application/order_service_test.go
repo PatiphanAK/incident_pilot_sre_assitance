@@ -21,11 +21,17 @@ func newFakeProductRepo() *fakeProductRepo {
 }
 
 func (r *fakeProductRepo) seed(id, name string, quantity int, price float64) {
-	r.products[id] = &stockdomain.Product{ID: id, Name: name, Quantity: quantity, Price: price}
+	r.products[id] = &stockdomain.Product{ID: id, SKU: "SKU-" + id, Name: name, Quantity: quantity, Price: price}
 }
 
 func (r *fakeProductRepo) Create(ctx context.Context, p *stockdomain.Product) error {
-	r.products[p.ID] = p
+	for _, existing := range r.products {
+		if existing.SKU == p.SKU {
+			return stockdomain.ErrSKUExists
+		}
+	}
+	cp := *p
+	r.products[p.ID] = &cp
 	return nil
 }
 
@@ -44,6 +50,39 @@ func (r *fakeProductRepo) List(ctx context.Context) ([]stockdomain.Product, erro
 		out = append(out, *p)
 	}
 	return out, nil
+}
+
+func (r *fakeProductRepo) Update(ctx context.Context, id string, name, description *string, price float64) (*stockdomain.Product, error) {
+	p, ok := r.products[id]
+	if !ok {
+		return nil, stockdomain.ErrProductNotFound
+	}
+	if name != nil {
+		p.Name = *name
+	}
+	if description != nil {
+		p.Description = *description
+	}
+	p.Price = price
+	cp := *p
+	return &cp, nil
+}
+
+func (r *fakeProductRepo) Delete(ctx context.Context, id string) error {
+	if _, ok := r.products[id]; !ok {
+		return stockdomain.ErrProductNotFound
+	}
+	delete(r.products, id)
+	return nil
+}
+
+func (r *fakeProductRepo) SetQuantity(ctx context.Context, id string, quantity int) error {
+	p, ok := r.products[id]
+	if !ok {
+		return stockdomain.ErrProductNotFound
+	}
+	p.Quantity = quantity
+	return nil
 }
 
 func (r *fakeProductRepo) DecrementQuantity(ctx context.Context, id string, by int) (*stockdomain.Product, error) {
@@ -101,6 +140,23 @@ func (r *fakeOrderRepo) List(ctx context.Context) ([]domain.Order, error) {
 		out = append(out, *o)
 	}
 	return out, nil
+}
+
+func (r *fakeOrderRepo) UpdateStatus(ctx context.Context, id string, status string) error {
+	o, ok := r.orders[id]
+	if !ok {
+		return domain.ErrOrderNotFound
+	}
+	o.Status = status
+	return nil
+}
+
+func (r *fakeOrderRepo) Delete(ctx context.Context, id string) error {
+	if _, ok := r.orders[id]; !ok {
+		return domain.ErrOrderNotFound
+	}
+	delete(r.orders, id)
+	return nil
 }
 
 func newService(stockRepo *fakeProductRepo, orderRepo *fakeOrderRepo) *OrderService {
@@ -198,5 +254,124 @@ func TestOrderService_Place_CompensatesOnCreateFailure(t *testing.T) {
 	}
 	if len(orderRepo.orders) != 0 {
 		t.Errorf("expected no persisted orders, got %d", len(orderRepo.orders))
+	}
+}
+
+func TestOrderService_UpdateOrderStatus_Transitions(t *testing.T) {
+	cases := []struct {
+		from string
+		to   string
+		ok   bool
+	}{
+		{domain.StatusPending, domain.StatusPaid, true},
+		{domain.StatusPending, domain.StatusCancelled, true},
+		{domain.StatusPaid, domain.StatusShipped, true},
+		{domain.StatusPaid, domain.StatusCancelled, true},
+		{domain.StatusShipped, domain.StatusPaid, false},     // terminal
+		{domain.StatusShipped, domain.StatusCancelled, false}, // terminal
+		{domain.StatusCancelled, domain.StatusPending, false}, // terminal
+		{domain.StatusCancelled, domain.StatusPaid, false},    // terminal
+		{domain.StatusPending, domain.StatusPending, false},   // same status is not a transition
+		{domain.StatusPending, "REFUNDED", false},             // unknown status
+	}
+	for _, tc := range cases {
+		t.Run(tc.from+"_to_"+tc.to, func(t *testing.T) {
+			stockRepo := newFakeProductRepo()
+			orderRepo := newFakeOrderRepo()
+			svc := newService(stockRepo, orderRepo)
+			order := &domain.Order{
+				ID:     "o1",
+				UserID: "u1",
+				Status: tc.from,
+				Items:  []domain.OrderItem{{ProductID: "p1", Quantity: 2, PriceAtPurchase: 5.0}},
+			}
+			orderRepo.orders[order.ID] = order
+
+			got, err := svc.UpdateOrderStatus(context.Background(), "o1", tc.to)
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("UpdateOrderStatus() error = %v, want none", err)
+				}
+				if got.Status != tc.to {
+					t.Errorf("Status = %q, want %q", got.Status, tc.to)
+				}
+				if orderRepo.orders["o1"].Status != tc.to {
+					t.Errorf("persisted status = %q, want %q", orderRepo.orders["o1"].Status, tc.to)
+				}
+			} else {
+				if !errors.Is(err, domain.ErrInvalidStatusTransition) {
+					t.Fatalf("UpdateOrderStatus() error = %v, want ErrInvalidStatusTransition", err)
+				}
+				if orderRepo.orders["o1"].Status != tc.from {
+					t.Errorf("persisted status = %q, want %q (unchanged)", orderRepo.orders["o1"].Status, tc.from)
+				}
+			}
+		})
+	}
+}
+
+func TestOrderService_UpdateOrderStatus_NotFound(t *testing.T) {
+	stockRepo := newFakeProductRepo()
+	orderRepo := newFakeOrderRepo()
+	svc := newService(stockRepo, orderRepo)
+
+	_, err := svc.UpdateOrderStatus(context.Background(), "missing", domain.StatusPaid)
+	if !errors.Is(err, domain.ErrOrderNotFound) {
+		t.Fatalf("UpdateOrderStatus() error = %v, want ErrOrderNotFound", err)
+	}
+}
+
+func TestOrderService_UpdateOrderStatus_CancelReleasesStock(t *testing.T) {
+	stockRepo := newFakeProductRepo()
+	stockRepo.seed("p1", "Widget", 10, 5.0)
+	orderRepo := newFakeOrderRepo()
+	svc := newService(stockRepo, orderRepo)
+
+	order, err := svc.Place(context.Background(), domain.PlaceOrderInput{
+		UserID: "u1",
+		Items:  []domain.OrderItemInput{{ProductID: "p1", Quantity: 3}},
+	})
+	if err != nil {
+		t.Fatalf("Place() error = %v", err)
+	}
+	if p, _ := stockRepo.GetByID(context.Background(), "p1"); p.Quantity != 7 {
+		t.Fatalf("precondition: stock quantity = %d, want 7", p.Quantity)
+	}
+
+	updated, err := svc.UpdateOrderStatus(context.Background(), order.ID, domain.StatusCancelled)
+	if err != nil {
+		t.Fatalf("UpdateOrderStatus(cancel) error = %v", err)
+	}
+	if updated.Status != domain.StatusCancelled {
+		t.Errorf("Status = %q, want CANCELLED", updated.Status)
+	}
+	// Cancelling is the business operation that releases the reserved stock.
+	if p, _ := stockRepo.GetByID(context.Background(), "p1"); p.Quantity != 10 {
+		t.Errorf("stock quantity = %d, want 10 (released on cancel)", p.Quantity)
+	}
+}
+
+func TestOrderService_DeleteOrder(t *testing.T) {
+	stockRepo := newFakeProductRepo()
+	stockRepo.seed("p1", "Widget", 10, 5.0)
+	orderRepo := newFakeOrderRepo()
+	svc := newService(stockRepo, orderRepo)
+
+	order, err := svc.Place(context.Background(), domain.PlaceOrderInput{
+		UserID: "u1",
+		Items:  []domain.OrderItemInput{{ProductID: "p1", Quantity: 2}},
+	})
+	if err != nil {
+		t.Fatalf("Place() error = %v", err)
+	}
+	if err := svc.DeleteOrder(context.Background(), order.ID); err != nil {
+		t.Fatalf("DeleteOrder() error = %v", err)
+	}
+	if _, err := svc.GetOrder(context.Background(), order.ID); !errors.Is(err, domain.ErrOrderNotFound) {
+		t.Errorf("GetOrder() after delete error = %v, want ErrOrderNotFound", err)
+	}
+	// Deleting again is a not-found, not a silent success.
+	if err := svc.DeleteOrder(context.Background(), order.ID); !errors.Is(err, domain.ErrOrderNotFound) {
+		t.Errorf("second DeleteOrder() error = %v, want ErrOrderNotFound", err)
 	}
 }

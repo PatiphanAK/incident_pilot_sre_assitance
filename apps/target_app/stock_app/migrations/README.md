@@ -6,7 +6,7 @@ The app expects the schema to already exist.
 
 Each service gets its own database, and the services stay decoupled — they talk by
 `id`, never by a cross-database foreign key. This app uses the database
-**`target_app`** (users) and **`stock_db`** (products + audit log).
+**`target_app`** (users) and **`stock_db`** (products + inventory).
 
 ## Files
 
@@ -19,6 +19,7 @@ Each service gets its own database, and the services stay decoupled — they tal
 | `005_create_stock_tables.sql` | Creates `products` and `audit_logs` in `stock_db` |
 | `006_create_order_db.sql` | Creates the `order_db` database |
 | `007_create_order_tables.sql` | Creates `orders`, `order_items` and `audit_logs` in `order_db` |
+| `008_reset_stock_schema.sql` | Resets the business schema: drops the obsolete `stock_db`/`order_db` business tables (never touches `users`), creates the final `products` + `inventory` tables, and recreates `orders` + `order_items` (007 shape; `audit_logs` is dropped, not recreated) |
 
 ## Rules
 

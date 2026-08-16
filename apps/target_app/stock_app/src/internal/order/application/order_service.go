@@ -100,3 +100,53 @@ func (s *OrderService) ListOrders(ctx context.Context) ([]domain.Order, error) {
 func (s *OrderService) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
 	return s.orders.GetByID(ctx, id)
 }
+
+// UpdateOrderStatus moves an order to a new status, enforcing the lifecycle:
+//
+//	PENDING  -> PAID | CANCELLED
+//	PAID     -> SHIPPED | CANCELLED
+//	SHIPPED  -> (terminal)
+//	CANCELLED -> (terminal)
+//
+// The same status (or any other invalid target) is rejected with
+// ErrInvalidStatusTransition. Cancelling releases the order's reserved stock
+// in-process (best-effort, via the same compensate pattern Place uses): cancel is
+// the business operation that frees stock, so the status must be persisted first
+// — if a release fails it is logged and left for reconciliation, while the order
+// stays cancelled.
+func (s *OrderService) UpdateOrderStatus(ctx context.Context, id string, status string) (*domain.Order, error) {
+	order, err := s.orders.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !validStatusTransition(order.Status, status) {
+		return nil, domain.ErrInvalidStatusTransition
+	}
+	if err := s.orders.UpdateStatus(ctx, id, status); err != nil {
+		return nil, err
+	}
+	order.Status = status
+	if status == domain.StatusCancelled {
+		s.compensate(ctx, order.Items)
+	}
+	return order, nil
+}
+
+// DeleteOrder hard-deletes an order and its items (admin-level; it does NOT
+// release stock — cancel is the business operation that does that).
+func (s *OrderService) DeleteOrder(ctx context.Context, id string) error {
+	return s.orders.Delete(ctx, id)
+}
+
+// validStatusTransition reports whether moving an order from `from` to `to` is
+// allowed (see UpdateOrderStatus). The same status is NOT a valid transition.
+func validStatusTransition(from, to string) bool {
+	switch from {
+	case domain.StatusPending:
+		return to == domain.StatusPaid || to == domain.StatusCancelled
+	case domain.StatusPaid:
+		return to == domain.StatusShipped || to == domain.StatusCancelled
+	default: // SHIPPED / CANCELLED are terminal (and unknown `from` is rejected)
+		return false
+	}
+}

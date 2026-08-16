@@ -25,7 +25,8 @@ func NewOrderRepository(pool *pgxpool.Pool) *OrderRepository {
 }
 
 // The orders and order_items tables are created by the SQL files in migrations/,
-// not by the app. See migrations/007_create_order_tables.sql.
+// not by the app. See migrations/007_create_order_tables.sql (recreated by
+// migrations/008_reset_stock_schema.sql).
 
 const orderColumns = "id, user_id, status, total_price, created_at"
 
@@ -90,6 +91,42 @@ func (r *OrderRepository) List(ctx context.Context) ([]domain.Order, error) {
 		orders = append(orders, o)
 	}
 	return orders, rows.Err()
+}
+
+// UpdateStatus sets the order's status. Transition rules are enforced by the
+// application layer (OrderService.UpdateOrderStatus), not here.
+func (r *OrderRepository) UpdateStatus(ctx context.Context, id string, status string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE orders SET status = $2 WHERE id = $1`, id, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrOrderNotFound
+	}
+	return nil
+}
+
+// Delete removes the order and its items. order_items references orders within
+// order_db, so the items must go first — and in one transaction, so a failure
+// cannot leave an order with orphaned items.
+func (r *OrderRepository) Delete(ctx context.Context, id string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM order_items WHERE order_id = $1`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM orders WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrOrderNotFound
+	}
+	return tx.Commit(ctx)
 }
 
 // items loads the line items of one order.
