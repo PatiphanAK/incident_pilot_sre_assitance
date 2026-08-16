@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 
 	"stock_app/src/internal/observability"
 	"stock_app/src/internal/router"
@@ -33,9 +33,21 @@ func main() {
 	app := fiber.New()
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:3000",
-		AllowMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowOrigins: []string{"http://localhost:3000"},
+		AllowMethods: []string{
+			fiber.MethodGet,
+			fiber.MethodPost,
+			fiber.MethodPut,
+			fiber.MethodPatch,
+			fiber.MethodDelete,
+			fiber.MethodOptions,
+		},
+		AllowHeaders: []string{
+			"Origin",
+			"Content-Type",
+			"Accept",
+			"Authorization",
+		},
 	}))
 
 	deps, err := router.NewDependencies(ctx)
