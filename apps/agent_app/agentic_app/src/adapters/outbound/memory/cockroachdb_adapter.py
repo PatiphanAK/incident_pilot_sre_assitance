@@ -1,8 +1,9 @@
 """CockroachDB adapter for :class:`domain.ports.memory_port.MemoryPort`.
 
-All CockroachDB access in the app lives here — no other module may
-import ``psycopg``. Vector search uses CockroachDB's distributed vector
-index (HNSW) via the ``<->`` L2 distance operator::
+CockroachDB access lives in the outbound adapters (this one and the
+runbook adapter) — no other layer may import ``psycopg``. Vector search
+uses CockroachDB's distributed vector index (HNSW) via the ``<->`` L2
+distance operator::
 
     CREATE TABLE observed_incidents (
         id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -20,11 +21,11 @@ create-if-missing step (done via the CockroachDB Cloud MCP).
 from __future__ import annotations
 
 import json
-import os
 from typing import Callable
 
 from psycopg_pool import ConnectionPool
 
+from adapters.outbound.cockroachdb_dsn import build_dsn
 from adapters.outbound.embedding.embedder import embed as _default_embed
 from domain.models import IncidentMemory
 from domain.ports.memory_port import MemoryPort
@@ -39,28 +40,6 @@ _TABLE = "observed_incidents"
 # because the memory table is small. Pass ``max_distance=None`` to disable
 # the cutoff.
 _DEFAULT_MAX_DISTANCE = 1.1
-
-
-def _build_dsn() -> str:
-    """Build a psycopg conninfo string from the ``COCKROARCH_*`` env vars."""
-    user = os.environ.get("COCKROARCH_USER")
-    password = os.environ.get("COCKROARCH_DB_PASS")
-    host = os.environ.get("COCKROARCH_DB_HOST")
-    if not (user and password and host):
-        raise RuntimeError(
-            "Incomplete CockroachDB credentials in the environment; "
-            "COCKROARCH_USER, COCKROARCH_DB_PASS and COCKROARCH_DB_HOST are required."
-        )
-    port = os.environ.get("COCKROARCH_DB_PORT", "26257")
-    dbname = os.environ.get("COCKROARCH_DB_NAME", "defaultdb")
-    sslmode = os.environ.get("COCKROARCH_DB_SSLMODE", "require")
-    params = [f"sslmode={sslmode}"]
-    sslrootcert = os.environ.get("COCKROARCH_DB_SSLROOTCERT")
-    if sslrootcert:
-        params.append(f"sslrootcert={sslrootcert}")
-    if "://" in host:  # allow a full DSN to be provided directly
-        return host + ("?" if "?" not in host else "&") + "&".join(params)
-    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}?{'&'.join(params)}"
 
 
 class CockroachDBMemoryAdapter(MemoryPort):
@@ -115,4 +94,4 @@ class CockroachDBMemoryAdapter(MemoryPort):
 
 def memory_from_env() -> CockroachDBMemoryAdapter:
     """Build the adapter from the ``COCKROARCH_*`` environment."""
-    return CockroachDBMemoryAdapter(_build_dsn())
+    return CockroachDBMemoryAdapter(build_dsn())

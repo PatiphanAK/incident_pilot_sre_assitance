@@ -67,3 +67,58 @@
 
 Instructions to connect via OAuth
 ```claude mcp add cockroachdb-cloud https://cockroachlabs.cloud/mcp --transport http --header "mcp-cluster-id: cbbc1b52-ad45-42d2-8ac6-0bb7f9088668"```
+
+## Task 2 — runbook knowledge, decide node, alerts webhook
+
+The graph gained a decision point after the reasoning step (LangGraph
+conditional edges keyed on `state["decision"]`):
+
+```
+START → memory_check → analyze → decide ─┬→ run_runbook → persist_memory → END
+                                          └→ escalate ───→ persist_memory → END
+```
+
+`decide` allows automation only when the incident is **known** (a runbook
+matches `incident_type` AND long-term memory recalled a similar past
+incident) **and** safe (runbook `blast_radius` is low/medium). Everything
+else — novel incident or high blast radius — escalates to a human
+(`escalate` formats the message via `llm_port`, no new port).
+
+New pieces (hexagonal rule unchanged — nodes only call ports):
+
+- `domain/ports/runbook_port.py` + `domain/models/runbook.py`
+  (`Runbook`, `ExecutionResult`).
+- `adapters/outbound/runbook/cockroachdb_runbook_adapter.py` — exact
+  `incident_pattern` lookup; `execute` is **simulate-only** (logs steps,
+  returns `status="simulated"`) — deliberate hackathon scope, no real
+  remediation is wired.
+- `runbooks` table — `migrations/003_create_runbooks.sql`, seeded with 3
+  demo patterns (`connection pool exhaustion`/low, `disk usage high`/medium,
+  `primary region outage`/high — the high one proves escalate-on-high).
+- `POST /alerts` webhook — `adapters/inbound/http/` (FastAPI), same schema
+  for Grafana and synthetic demo payloads; `source` is logged, never
+  branched on.
+
+Run the API:
+
+```bash
+cd apps/agent_app/agentic_app
+uv run uvicorn adapters.inbound.http.main:app --port 8000
+```
+
+Demo the decision logic (memory starts empty, so the **first** alert of a
+kind is novel → escalate; it is persisted, so the **second** recalls it and
+runs the runbook):
+
+```bash
+curl -sX POST localhost:8000/alerts -H 'Content-Type: application/json' -d \
+  '{"source":"grafana","incident_type":"connection pool exhaustion","summary":"payments service running out of database connections"}'
+# → "decision": "escalate"
+
+# same payload again →
+# → "decision": "run_runbook", "execution": {"status": "simulated", "action": [...seeded steps...]}
+```
+
+Tests: `uv run --extra dev pytest -m unit` (fakes only, no I/O) ·
+`uv run --extra dev pytest -m integration` (live cluster) · full suite:
+`uv run --extra dev pytest`.

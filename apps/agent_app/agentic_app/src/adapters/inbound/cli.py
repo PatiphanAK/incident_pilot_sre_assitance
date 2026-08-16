@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from adapters.outbound.llm.openai_compatible_llm import OpenAICompatibleLLM
 from adapters.outbound.memory.cockroachdb_adapter import memory_from_env
+from adapters.outbound.runbook.cockroachdb_runbook_adapter import runbook_from_env
 from agent.graph import build_graph
 
 
@@ -31,9 +32,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     incident = " ".join(args)
-    graph = build_graph(llm=OpenAICompatibleLLM(), memory=memory_from_env())
+    graph = build_graph(
+        llm=OpenAICompatibleLLM(),
+        memory=memory_from_env(),
+        runbook=runbook_from_env(),
+    )
 
     print(f"Analyzing incident: {incident}\n")
+    # CLI input is free text with no incident_type, so decide() finds no
+    # runbook match and the graph always escalates — the decision support
+    # (analysis + memory) is still produced below.
     result = graph.invoke({"incident": incident})
 
     past = result.get("past_incidents") or []
@@ -46,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
         print()
     print("Analysis:")
     print(result["analysis"])
+    if result.get("decision") == "run_runbook":
+        execution = result["execution"]
+        print(f"\nDecision: run_runbook ({execution.status})")
+        for i, step in enumerate(execution.action, start=1):
+            print(f"  {i}. {step}")
+    else:
+        print("\nDecision: escalate to human operator")
+        print(result["escalation"])
     print("\n[memory] incident persisted for future recall.")
     return 0
 

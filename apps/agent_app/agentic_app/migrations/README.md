@@ -4,13 +4,13 @@ Plain SQL files that set up the database for this app. They are meant to be run
 by hand — with DBeaver or the `cockroach sql` CLI — **not** by the application.
 The app expects the schema to already exist.
 
-This app keeps everything in a single table, `observed_incidents` (long-term
-incident memory for RAG), in the database named by `COCKROARCH_DB_NAME` in
-`.env` (**`defaultdb`** as of today). Unlike stock_app there is no dedicated
-database per service — and because the adapter
-(`src/adapters/outbound/memory/cockroachdb_adapter.py`) references the table
-**without** a database qualifier, you must run these files while connected to
-the database the app actually uses.
+This app keeps its tables (`observed_incidents` for long-term incident
+memory/RAG, `runbooks` for known remediation procedures) in the database named
+by `COCKROARCH_DB_NAME` in `.env` (**`defaultdb`** as of today). Unlike
+stock_app there is no dedicated database per service — and because the
+adapters (e.g. `src/adapters/outbound/memory/cockroachdb_adapter.py`)
+reference the tables **without** a database qualifier, you must run these
+files while connected to the database the app actually uses.
 
 ## Files
 
@@ -18,6 +18,7 @@ the database the app actually uses.
 |------|--------------|
 | `001_create_observed_incidents.sql` | Creates the `observed_incidents` table (`summary`, `resolution`, 1536-dim `embedding`, `created_at`) |
 | `002_create_vector_index.sql` | Creates the vector index on `embedding` (required for `ORDER BY embedding <-> …` to be fast) |
+| `003_create_runbooks.sql` | Creates the `runbooks` table (`incident_pattern`, `steps` JSONB, `blast_radius`) and seeds 3 demo rows (idempotent `NOT EXISTS` guards) |
 
 ## Rules
 
@@ -43,8 +44,8 @@ the database the app actually uses.
 ## How to run
 
 Build the connection URL from the `COCKROARCH_*` values in `.env` the same way
-the app does (see `_build_dsn()` in the adapter), pointing at the database the
-app uses:
+the app does (see `build_dsn()` in `src/adapters/outbound/cockroachdb_dsn.py`),
+pointing at the database the app uses:
 
 ```
 postgresql://USER:PASS@HOST:26257/defaultdb?sslmode=verify-full&sslrootcert=infra/cockroach-labs-cloud-ca.cert.pem
@@ -84,6 +85,7 @@ Verify while connected to `defaultdb`:
 ```sql
 SHOW INDEXES FROM observed_incidents;   -- expect primary key + observed_incidents_embedding
 SELECT count(*) FROM observed_incidents;
+SELECT incident_pattern, blast_radius FROM runbooks;   -- expect the 3 seeded patterns
 ```
 
 The app's integration tests (`uv run pytest -m integration`) then exercise the

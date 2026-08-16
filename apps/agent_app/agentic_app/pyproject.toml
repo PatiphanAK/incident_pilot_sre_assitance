@@ -8,15 +8,18 @@ version = "0.1.0"
 description = "Incident Pilot SRE agent — RAG long-term memory on CockroachDB (hexagonal, LangGraph)"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115",
     "langgraph>=0.2",
     "openai>=1.60",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
     "python-dotenv>=1.0",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.27",
     "pytest>=8",
 ]
 
@@ -33,5 +36,6 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
+    "unit: fast tests running on fakes only — no network, no DB (run with: pytest -m unit)",
     "integration: tests that require a live CockroachDB cluster and LLM API (run with: pytest -m integration)",
 ]

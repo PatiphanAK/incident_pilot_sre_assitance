@@ -1,8 +1,8 @@
-"""Core domain models for incident memory.
+"""Core domain model for incident memory.
 
-These are plain dataclasses — no infrastructure types, so the domain
-stays importable from anywhere (nodes, tests, adapters) without
-dragging in drivers or SDKs.
+Plain dataclasses — no infrastructure types, so the domain stays
+importable from anywhere (nodes, tests, adapters) without dragging in
+drivers or SDKs.
 """
 
 from __future__ import annotations
