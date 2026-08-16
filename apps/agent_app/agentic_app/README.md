@@ -1,0 +1,69 @@
+# Task: Implement RAG-based long-term memory (CockroachDB)
+
+## Context
+- Project uses hexagonal architecture: `domain/`, `agent/` (LangGraph), `adapters/`
+- CockroachDB Managed MCP Server is already connected — inspect the live
+  cluster schema yourself via MCP before writing SQL. Do not guess column
+  names or types.
+- Goal: `recall_memory` and `persist_memory` nodes in `agent/nodes/` need a
+  real RAG implementation backed by CockroachDB's distributed vector index.
+
+## Constraints (do not violate)
+- `agent/nodes/*` must only call `MemoryPort` (in `domain/ports/memory_port.py`).
+  Never import a DB driver or embedding client directly inside a node.
+- All CockroachDB access lives in
+  `adapters/outbound/memory/cockroachdb_adapter.py`.
+- Write a `FakeMemoryPort` in `tests/unit/fakes/` alongside the real adapter
+  so agent nodes can be unit tested without a live DB connection.
+
+## Steps
+
+1. **Inspect the cluster via MCP** — confirm whether `observed_incidents`
+   already exists. If not, create it:
+   ```sql
+   CREATE TABLE observed_incidents (
+       id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+       summary STRING NOT NULL,
+       resolution STRING,
+       embedding VECTOR(1536) NOT NULL,
+       created_at TIMESTAMPTZ DEFAULT now(),
+       VECTOR INDEX (embedding)
+   );
+   ```
+
+2. **Pick and wire an embedding function** — expose it as
+   `adapters/outbound/embedding/embedder.py` with a single function
+   `embed(text: str) -> list[float]`. Use whichever provider is already
+   configured as the primary LLM (keep it swappable — don't hardcode a
+   provider inside the adapter).
+
+3. **Implement `CockroachDBMemoryAdapter`** in
+   `adapters/outbound/memory/cockroachdb_adapter.py`:
+   - `find_similar(text: str, top_k: int = 3) -> list[dict]` — embed the
+     query, run a `ORDER BY embedding <-> %s LIMIT %s` search, return
+     `summary`, `resolution`, `distance`.
+   - `save_incident(summary: str, resolution: str | None) -> None` —
+     embed and insert a new row.
+   - Use a connection pool (psycopg pool), not a new connection per call.
+
+4. **Wire nodes**:
+   - `agent/nodes/memory_check_node.py` → call `memory.find_similar(...)`,
+     store result in `state["past_incidents"]`.
+   - `agent/nodes/persist_memory_node.py` → call
+     `memory.save_incident(...)` after the response is generated.
+
+5. **Tests**:
+   - Unit: run the graph with `FakeMemoryPort` (in-memory list, cosine
+     similarity in pure Python) — no network calls.
+   - Integration: run against the real CockroachDB cluster (via the same
+     connection string the app uses, not MCP) and assert a seeded incident
+     is retrievable by a semantically similar query.
+
+## Definition of done
+- `find_similar` returns relevant results for a paraphrased query (not
+  exact string match) — prove RAG is actually semantic, not keyword search.
+- No adapter or driver imports appear anywhere under `agent/` or `domain/`.
+- Unit tests pass with zero live DB connections.
+
+Instructions to connect via OAuth
+```claude mcp add cockroachdb-cloud https://cockroachlabs.cloud/mcp --transport http --header "mcp-cluster-id: cbbc1b52-ad45-42d2-8ac6-0bb7f9088668"```
