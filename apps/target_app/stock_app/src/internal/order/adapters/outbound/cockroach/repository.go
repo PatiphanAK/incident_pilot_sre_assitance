@@ -28,6 +28,28 @@ func NewOrderRepository(pool *pgxpool.Pool) *OrderRepository {
 // not by the app. See migrations/007_create_order_tables.sql (recreated by
 // migrations/008_reset_stock_schema.sql).
 
+// PingSchema reports whether the order tables (orders, order_items) actually
+// exist in the connected database. A connection can reach CockroachDB
+// (Pool.Ping succeeds) while the pool points at the wrong database — e.g.
+// target_app instead of order_db — in which case the tables are absent and
+// every real query fails with "relation orders does not exist" (SQLSTATE
+// 42P01). /health and startup use this so that situation surfaces as a failure
+// instead of a false "up".
+func (r *OrderRepository) PingSchema(ctx context.Context) error {
+	var orders, orderItems bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'orders'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'order_items')`,
+	).Scan(&orders, &orderItems); err != nil {
+		return err
+	}
+	if !orders || !orderItems {
+		return errors.New("schema unavailable: orders/order_items tables not found in the connected database (expected the order_db schema)")
+	}
+	return nil
+}
+
 const orderColumns = "id, user_id, status, total_price, created_at"
 
 // Create inserts the order and its items together. orders and order_items live in

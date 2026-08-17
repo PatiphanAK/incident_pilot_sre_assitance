@@ -1,6 +1,8 @@
 package order
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -20,6 +22,7 @@ import (
 // never imports the stock context directly.
 type Module struct {
 	Handler *handlers.Handler
+	repo    *cockroach.OrderRepository
 }
 
 func NewModule(pool *pgxpool.Pool, tokens *auth.TokenService, stockPort domain.StockPort) *Module {
@@ -29,7 +32,17 @@ func NewModule(pool *pgxpool.Pool, tokens *auth.TokenService, stockPort domain.S
 
 	return &Module{
 		Handler: handler,
+		repo:    repo,
 	}
+}
+
+// Check verifies the order schema exists in the connected database. It backs the
+// /health endpoint and a one-time startup check, so a wrong-database
+// misconfiguration (e.g. ORDER_DATABASE_URL unset and falling back to
+// DATABASE_URL = target_app instead of order_db) is reported instead of
+// silently 500-ing every request.
+func (m *Module) Check(ctx context.Context) error {
+	return m.repo.PingSchema(ctx)
 }
 
 // RegisterRoutes mounts the order routes on the given router.

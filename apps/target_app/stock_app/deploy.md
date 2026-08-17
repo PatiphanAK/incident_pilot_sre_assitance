@@ -69,10 +69,28 @@ Rough cost (us-east-1, **0.125 vCPU / 256 MiB**): ~$0.006/hr → ~$4.50 if left
      cockroach sql --url "$DATABASE_URL" -f "$f"
    done
    ```
-   This creates `target_app`, `stock_db`, and `order_db`.
+   This creates `target_app`, `stock_db`, and `order_db` (one URL works for all
+   the files — the SQL is fully qualified).
 2. **Secrets** (so they aren't in the task def in cleartext). Create a Secrets
-   Manager secret `stock-app` with keys `database-url` and `jwt-secret`, then the
-   task def's `secrets` entries pick them up:
+   Manager secret `stock-app` with keys `database-url`, `stock-database-url`,
+   `order-database-url` and `jwt-secret` — **three URLs, one per database** (same
+   host/user/password, only the path differs):
+   ```json
+   {
+     "database-url":          "postgresql://USER:PASS@HOST:26257/target_app?sslmode=verify-full&sslrootcert=<CA pem>&sslcert=<client cert pem>&sslkey=<client key pem>",
+     "stock-database-url":    "postgresql://USER:PASS@HOST:26257/stock_db?sslmode=verify-full&sslrootcert=<CA pem>&sslcert=<client cert pem>&sslkey=<client key pem>",
+     "order-database-url":    "postgresql://USER:PASS@HOST:26257/order_db?sslmode=verify-full&sslrootcert=<CA pem>&sslcert=<client cert pem>&sslkey=<client key pem>",
+     "jwt-secret":           "<openssl rand -base64 32>"
+   }
+   ```
+   `DATABASE_URL` must end with `/target_app`, `STOCK_DATABASE_URL` with
+   `/stock_db`, `ORDER_DATABASE_URL` with `/order_db` — the app verifies each
+   schema at boot and in `/health`, and logs `startup.schema_check_failed` with
+   a hint when one points at the wrong database. (Single-database layout: put
+   the same URL in all three keys — the tables just have to exist in that one
+   database.)
+   The task def's `secrets` entries pick the keys up; **a task fails to start if
+   a key is missing**, so add all three keys before re-running the task.
    ```bash
    openssl rand -base64 32   # -> the JWT_SECRET value
    ```
@@ -133,6 +151,7 @@ Logs are already in CloudWatch Logs (`/ecs/stock-app`) via the `awslogs` driver,
 - **Container-only** — the app is built for long-lived containers (ECS Fargate):
   persistent DB pools plus background workers (metrics flusher, DB sampler), with
   a graceful SIGTERM drain. There is no Lambda mode.
-- `JWT_SECRET` in a task env is fine for a hackathon demo; prefer Secrets Manager
-  for anything real.
+- `DATABASE_URL` / `STOCK_DATABASE_URL` / `ORDER_DATABASE_URL` and `JWT_SECRET`
+  come from the `stock-app` Secrets Manager secret (one key per database — see
+  step 2), not cleartext in the task def.
 - Migrations are applied by hand, not by the container.

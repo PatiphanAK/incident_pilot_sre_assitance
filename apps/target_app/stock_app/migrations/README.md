@@ -5,8 +5,9 @@ by hand — with DBeaver or the `cockroach sql` CLI — **not** by the applicati
 The app expects the schema to already exist.
 
 Each service gets its own database, and the services stay decoupled — they talk by
-`id`, never by a cross-database foreign key. This app uses the database
-**`target_app`** (users) and **`stock_db`** (products + inventory).
+`id`, never by a cross-database foreign key. This app uses the databases
+**`target_app`** (users), **`stock_db`** (products + inventory) and
+**`order_db`** (orders + order_items).
 
 ## Files
 
@@ -70,16 +71,28 @@ docker exec -i <container-name> cockroach sql --insecure < migrations/007_create
 
 ## After running the migrations
 
-Point the app's `DATABASE_URL` (in `.env`) at the new database — the URL must
-end with `/target_app`:
+Point the app's three URLs (in `.env`, or the `stock-app` Secrets Manager
+secret in ECS) at the three databases — same host/user/password, only the path
+differs:
 
 ```bash
 # CockroachCloud example
 DATABASE_URL='postgresql://user:pass@cluster-1234.xz.aws-region-1.cockroachlabs.cloud:26257/target_app?sslmode=verify-full&sslrootcert=$HOME/.postgresql/root.crt&options=--cluster=cluster-1234'
+STOCK_DATABASE_URL='postgresql://user:pass@cluster-1234.xz.aws-region-1.cockroachlabs.cloud:26257/stock_db?sslmode=verify-full&sslrootcert=$HOME/.postgresql/root.crt&options=--cluster=cluster-1234'
+ORDER_DATABASE_URL='postgresql://user:pass@cluster-1234.xz.aws-region-1.cockroachlabs.cloud:26257/order_db?sslmode=verify-full&sslrootcert=$HOME/.postgresql/root.crt&options=--cluster=cluster-1234'
 
 # local Docker example
 DATABASE_URL='postgresql://root@localhost:26257/target_app?sslmode=disable'
+STOCK_DATABASE_URL='postgresql://root@localhost:26257/stock_db?sslmode=disable'
+ORDER_DATABASE_URL='postgresql://root@localhost:26257/order_db?sslmode=disable'
 ```
+
+`STOCK_DATABASE_URL` / `ORDER_DATABASE_URL` fall back to `DATABASE_URL` when
+unset, so a single-database setup still works (all tables in one database). In
+the prepared-to-split layout above, leaving them unset makes the stock/order
+pools connect to `target_app`, where their tables do not exist — the app now
+logs `startup.schema_check_failed` for those databases and `/health` reports
+them as down instead of silently 500-ing.
 
 ## Adding a new migration (developers)
 

@@ -34,6 +34,14 @@
           "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:database-url::"
         },
         {
+          "name": "STOCK_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:stock-database-url::"
+        },
+        {
+          "name": "ORDER_DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:order-database-url::"
+        },
+        {
           "name": "JWT_SECRET",
           "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:204936843729:secret:stock-app-BrTaVz:jwt-secret::"
         }

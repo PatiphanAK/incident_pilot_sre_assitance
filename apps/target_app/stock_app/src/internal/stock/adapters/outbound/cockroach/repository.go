@@ -29,6 +29,28 @@ func NewProductRepository(pool *pgxpool.Pool) *ProductRepository {
 // The products and inventory tables are created by the SQL files in migrations/,
 // not by the app. See migrations/008_reset_stock_schema.sql.
 
+// PingSchema reports whether the stock tables (products, inventory) actually
+// exist in the connected database. A connection can reach CockroachDB
+// (Pool.Ping succeeds) while the pool points at the wrong database — e.g.
+// target_app instead of stock_db — in which case the tables are absent and
+// every real query fails with "relation products does not exist" (SQLSTATE
+// 42P01). /health and startup use this so that situation surfaces as a failure
+// instead of a false "up".
+func (r *ProductRepository) PingSchema(ctx context.Context) error {
+	var products, inventory bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'products'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'inventory')`,
+	).Scan(&products, &inventory); err != nil {
+		return err
+	}
+	if !products || !inventory {
+		return errors.New("schema unavailable: products/inventory tables not found in the connected database (expected the stock_db schema)")
+	}
+	return nil
+}
+
 // productSelect is the canonical SELECT list for products (joined with
 // inventory); scanProduct relies on this order. A product without an inventory
 // row still lists, with a quantity of 0.

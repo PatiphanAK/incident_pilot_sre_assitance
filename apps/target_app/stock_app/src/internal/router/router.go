@@ -90,6 +90,25 @@ func NewDependencies(ctx context.Context) (*Dependencies, error) {
 	// stockadapter translates the stock context's errors into the order domain's.
 	orderModule := order.NewModule(orderPool, tokens, stockadapter.NewAdapter(stockModule.Service))
 
+	// Same boot-time schema check as for users: in the deployed layout the stock
+	// and order tables live in stock_db / order_db, so an unset
+	// STOCK/ORDER_DATABASE_URL (falling back to DATABASE_URL = /target_app) used
+	// to 500 every stock/order request while /health still reported "ok".
+	if err := stockModule.Check(ctx); err != nil {
+		slog.Error("startup.schema_check_failed",
+			"database", "stock_db",
+			"error", err.Error(),
+			"hint", "verify STOCK_DATABASE_URL points at stock_db (unset = falls back to DATABASE_URL)",
+		)
+	}
+	if err := orderModule.Check(ctx); err != nil {
+		slog.Error("startup.schema_check_failed",
+			"database", "order_db",
+			"error", err.Error(),
+			"hint", "verify ORDER_DATABASE_URL points at order_db (unset = falls back to DATABASE_URL)",
+		)
+	}
+
 	// Observability: structured logging + CloudWatch metrics. A nil publisher
 	// (no AWS_REGION) means metrics are emitted to the log stream instead.
 	metrics := observability.NewMetrics()
@@ -155,28 +174,50 @@ func Register(app *fiber.App, deps *Dependencies) {
 	deps.Order.RegisterRoutes(api)
 }
 
+// healthCheck pings one database and verifies its schema. Real health checks
+// also feed the DatabaseLatency / DatabaseUp metrics.
+func healthCheck(ctx context.Context, name string, p *pgxpool.Pool, check func(context.Context) error, m *observability.Metrics) error {
+	start := time.Now()
+	if err := p.Ping(ctx); err != nil {
+		m.ObserveDatabase(name, time.Since(start), err)
+		return err
+	}
+	if err := check(ctx); err != nil {
+		m.ObserveDatabase(name, time.Since(start), err)
+		return err
+	}
+	m.ObserveDatabase(name, time.Since(start), nil)
+	return nil
+}
+
 func health(deps *Dependencies) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		start := time.Now()
-		err := deps.Pool.Ping(c.Context())
-		// Real health checks also feed the DatabaseLatency / DatabaseUp metrics.
-		deps.Metrics.ObserveDatabase("target_app", time.Since(start), err)
-		if err != nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"status":   "unhealthy",
-				"database": "down",
-			})
-		}
+		ctx := c.Context()
 		// A connection can reach CockroachDB while pointed at the wrong database
-		// (e.g. defaultdb instead of target_app): the ping succeeds, but the app's
-		// tables are absent and every real request 500s. Verify the schema the app
-		// actually depends on so /health reports "down" instead of a false "up".
-		if sErr := deps.User.Check(c.Context()); sErr != nil {
-			slog.Error("health.schema_check_failed", "error", sErr.Error())
+		// (e.g. defaultdb instead of target_app, or DATABASE_URL used for all
+		// three pools while the business tables live in stock_db / order_db):
+		// the ping succeeds, but the app's tables are absent and every real
+		// request 500s. Verify each database the app actually depends on so
+		// /health reports "down" instead of a false "up".
+		var down []string
+		if err := healthCheck(ctx, "target_app", deps.Pool, deps.User.Check, deps.Metrics); err != nil {
+			slog.Error("health.schema_check_failed", "database", "target_app", "error", err.Error())
+			down = append(down, "target_app")
+		}
+		if err := healthCheck(ctx, "stock_db", deps.stockPool, deps.Stock.Check, deps.Metrics); err != nil {
+			slog.Error("health.schema_check_failed", "database", "stock_db", "error", err.Error())
+			down = append(down, "stock_db")
+		}
+		if err := healthCheck(ctx, "order_db", deps.orderPool, deps.Order.Check, deps.Metrics); err != nil {
+			slog.Error("health.schema_check_failed", "database", "order_db", "error", err.Error())
+			down = append(down, "order_db")
+		}
+		if len(down) > 0 {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"status":   "unhealthy",
 				"database": "down",
 				"reason":   "schema unavailable",
+				"down":     down,
 			})
 		}
 		return c.JSON(fiber.Map{
