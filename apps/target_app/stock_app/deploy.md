@@ -70,7 +70,10 @@ Rough cost (us-east-1, **0.125 vCPU / 256 MiB**): ~$0.006/hr → ~$4.50 if left
    done
    ```
    This creates `target_app`, `stock_db`, and `order_db` (one URL works for all
-   the files — the SQL is fully qualified).
+   the files — the SQL is fully qualified). For a **fresh/empty cluster only** —
+   the loop includes `008`, which drops the business tables. A cluster that
+   already has products (pre-008 `stock_db`) instead runs `009` + `900`
+   (see `migrations/README.md` → "Legacy clusters").
 2. **Secrets** (so they aren't in the task def in cleartext). Create a Secrets
    Manager secret `stock-app` with keys `database-url`, `stock-database-url`,
    `order-database-url` and `jwt-secret` — **three URLs, one per database** (same
