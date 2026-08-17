@@ -17,6 +17,8 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 _FORBIDDEN = (
     "psycopg",  # DB driver
     "openai",  # LLM SDK
+    "boto3",  # AWS SDK (CloudWatch)
+    "botocore",  # AWS SDK core
     "adapters",  # concrete implementations
     "langchain",  # heavy SDKs; the agent uses langgraph only
 )

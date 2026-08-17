@@ -22,6 +22,10 @@ class AlertPayload(BaseModel):
     incident_type: str
     summary: str
     severity: str | None = None
+    # Where to fetch live evidence from. Optional: when omitted, the observe
+    # node falls back to the stock_app defaults (/ecs/stock-app, stock_app).
+    log_group: str | None = None
+    metric_namespace: str | None = None
 
 
 def create_alerts_router(graph) -> APIRouter:
@@ -36,17 +40,24 @@ def create_alerts_router(graph) -> APIRouter:
     @router.post("/alerts")
     def receive_alert(payload: AlertPayload) -> dict:
         logger.info(
-            "alert received from %s (incident_type=%s, severity=%s)",
+            "alert received from %s (incident_type=%s, severity=%s, log_group=%s)",
             payload.source,
             payload.incident_type,
             payload.severity,
+            payload.log_group,
         )
         # No checkpointer is compiled into the graph, so there is no
         # thread_id to resume — each alert is a fresh invocation.
+        # log_group / metric_namespace are optional; the observe node applies
+        # the stock_app defaults when they are absent.
         initial_state = {
             "incident": payload.summary,
             "incident_type": payload.incident_type,
         }
+        if payload.log_group is not None:
+            initial_state["log_group"] = payload.log_group
+        if payload.metric_namespace is not None:
+            initial_state["metric_namespace"] = payload.metric_namespace
         return graph.invoke(initial_state)
 
     return router

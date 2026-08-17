@@ -15,6 +15,7 @@ from agent.graph import build_graph
 from domain.models import Runbook
 from tests.unit.fakes.fake_llm import FakeLLM
 from tests.unit.fakes.fake_memory_port import FakeMemoryPort
+from tests.unit.fakes.fake_observability_port import FakeObservabilityPort
 from tests.unit.fakes.fake_runbook_port import FakeRunbookPort
 
 _RUNBOOK = Runbook(
@@ -103,3 +104,33 @@ def test_alert_rejects_payload_missing_required_fields() -> None:
     response = client.post("/alerts", json={"source": "synthetic"})
 
     assert response.status_code == 422
+
+
+def test_alert_with_log_group_feeds_logs_into_analysis() -> None:
+    """End-to-end: a log_group in the alert reaches the observe port, and the
+    fetched log lines are folded into the analyze LLM prompt."""
+    memory = FakeMemoryPort()
+    llm = FakeLLM()
+    observability = FakeObservabilityPort(logs=["db ping failed on order_db"])
+    graph = build_graph(
+        llm=llm, memory=memory, runbook=FakeRunbookPort(), observability=observability
+    )
+    app = FastAPI()
+    app.include_router(create_alerts_router(graph))
+    client = TestClient(app)
+
+    response = client.post(
+        "/alerts",
+        json={
+            "source": "synthetic",
+            "incident_type": "db down",
+            "summary": "order database is slow",
+            "log_group": "/ecs/stock-app",
+        },
+    )
+
+    assert response.status_code == 200
+    # The agent asked the observability port for the requested log group.
+    assert observability.log_calls[0]["log_group"] == "/ecs/stock-app"
+    # And the fetched log line reached the analyze prompt.
+    assert "db ping failed on order_db" in llm.prompts[0]

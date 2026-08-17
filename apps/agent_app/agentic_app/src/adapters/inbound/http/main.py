@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from adapters.inbound.http.routers.alerts import create_alerts_router
 from adapters.outbound.llm.openai_compatible_llm import OpenAICompatibleLLM
 from adapters.outbound.memory.cockroachdb_adapter import memory_from_env
+from adapters.outbound.observability.cloudwatch_adapter import observability_from_env
 from adapters.outbound.runbook.cockroachdb_runbook_adapter import runbook_from_env
 from agent.graph import build_graph
 
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
         llm=OpenAICompatibleLLM(),
         memory=memory_from_env(),
         runbook=runbook_from_env(),
+        observability=observability_from_env(),
     )
     app.include_router(create_alerts_router(graph))
     return app

@@ -122,3 +122,67 @@ curl -sX POST localhost:8000/alerts -H 'Content-Type: application/json' -d \
 Tests: `uv run --extra dev pytest -m unit` (fakes only, no I/O) ·
 `uv run --extra dev pytest -m integration` (live cluster) · full suite:
 `uv run --extra dev pytest`.
+
+## Task 3 — observability tool (CloudWatch logs + metrics)
+
+The agent can now **observe the target app directly**. A new `observe` node
+(between `memory_check` and `analyze`) reads the stock app's live CloudWatch
+telemetry through the new `ObservabilityPort` + `CloudWatchAdapter` (boto3)
+and folds it into the LLM analysis — so the agent reasons over what the service
+is *actually* doing, not just the alert text.
+
+```
+START → memory_check → observe → analyze → decide → run_runbook/escalate → persist_memory → END
+```
+
+- **Logs** — `fetch_recent_logs` (CloudWatch Logs `filter_log_events`), default
+  group `/ecs/stock-app`.
+- **Metrics** — `get_metric` (CloudWatch `get_metric_statistics`), namespace
+  `stock_app`: `Requests`, `RequestErrors`, `RequestLatency`, plus per-database
+  `DatabaseUp` / `DatabaseErrors`.
+- Both are optional per-alert: `log_group` and `metric_namespace` on
+  `POST /alerts` (the defaults above apply when omitted). The adapter degrades
+  to empty evidence and **never raises** when credentials/permissions are
+  missing, so the graph stays usable even with observability unavailable.
+- Hexagonal rule intact: the node calls only the port; `boto3` lives solely in
+  `adapters/outbound/observability/`. `boto3`/`botocore` are now forbidden under
+  `agent/` and `domain/` (enforced by `test_architecture.py`).
+
+### IAM (least privilege, read-only)
+
+The identity that runs the agent needs only these, scoped where possible:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["logs:FilterLogEvents", "cloudwatch:GetMetricStatistics"],
+  "Resource": [
+    "arn:aws:logs:ap-southeast-1:<account>:log-group:/ecs/stock-app:*",
+    "arn:aws:cloudwatch:ap-southeast-1:<account>:metric:*"
+  ]
+}
+```
+
+Request `logs:FilterLogEvents` + `cloudwatch:GetMetricStatistics` only — do not
+grant `logs:*` / `cloudwatch:*`.
+
+### Local dev credentials
+
+For local dev (not on Lambda/ECS with an IAM role), set the standard AWS env
+vars — boto3 picks them up automatically via its default chain; there is no
+custom credential-loading path:
+
+```bash
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=ap-southeast-1
+```
+
+### Demo (grounded analysis)
+
+```bash
+curl -sX POST localhost:8000/alerts -H 'Content-Type: application/json' -d \
+  '{"source":"synthetic","incident_type":"disk usage high","summary":"order db slow",
+    "log_group":"/ecs/stock-app","metric_namespace":"stock_app"}'
+```
+
+The response's `analysis` now cites the fetched logs/metrics (e.g. a
+`DatabaseUp` that dropped to 0 or a `RequestErrors` spike).
