@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inventory Management System</title>
+    <style>
+      body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }
+      .card-shadow { box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); border: none; border-radius: 12px; }
+      .product-card { transition: transform 0.2s; position: relative; }
+      .product-card:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1); }
+      .delete-btn { position: absolute; top: 10px; right: 10px; z-index: 10; padding: 0.25rem 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

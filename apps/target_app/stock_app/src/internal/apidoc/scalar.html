@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stock_app API — v1 (Scalar)</title>
+</head>
+<body>
+<div id="api"></div>
+<!-- Scalar: same OpenAPI spec as /docs, same origin (Try-it-out works without
+     CORS), but with a prominent labeled Authorize dialog for the bearer token.
+     jsdelivr on purpose: /docs uses unpkg, so if one CDN is blocked the other
+     still works. -->
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1/dist/browser.js"></script>
+<script>
+  Scalar.createApiReference('#api', {
+    url: '/docs/openapi.yaml',
+  });
+</script>
+</body>
+</html>
