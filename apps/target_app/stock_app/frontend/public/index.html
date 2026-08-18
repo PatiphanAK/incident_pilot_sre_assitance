@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock & Order Management (Admin)</title>
+    <!-- Bootstrap 5 CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }
+        .card-shadow { box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); border: none; border-radius: 12px; }
+        .product-card { transition: transform 0.2s; position: relative; }
+        .product-card:hover { transform: translateY(-3px); box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1); }
+        .navbar-brand { font-weight: bold; color: #0d6efd !important; }
+        #dashboardSection { display: none; }
+        .action-menu { position: absolute; top: 10px; right: 10px; z-index: 10; }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="#"><i class="bi bi-box-seam me-2"></i>Stock management system</a>
+            <div id="userMenu" style="display: none;">
+                <span class="me-3 text-muted" id="welcomeMsg"></span>
+                <button class="btn btn-outline-danger btn-sm" onclick="handleLogout()"><i class="bi bi-box-arrow-right"></i> ออกจากระบบ</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container pb-5">
+        <!-- 1. หน้าล็อกอิน -->
+        <div class="row justify-content-center" id="loginSection">
+            <div class="col-md-5">
+                <div class="card card-shadow mt-5">
+                    <div class="card-body p-5">
+                        <div class="text-center mb-4">
+                            <h3 class="fw-bold">เข้าสู่ระบบ</h3>
+                            <p class="text-muted">กรุณากรอกอีเมลและรหัสผ่านของคุณ</p>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">อีเมล</label>
+                            <input type="email" class="form-control" id="email" placeholder="admin@example.com">
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label">รหัสผ่าน</label>
+                            <input type="password" class="form-control" id="password" placeholder="••••••••">
+                        </div>
+                        <button class="btn btn-primary w-100 py-2 mb-3" onclick="handleLogin()">เข้าสู่ระบบ</button>
+                        <div id="log" class="text-center fw-bold mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. หน้า Dashboard -->
+        <div id="dashboardSection">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="fw-bold m-0"><i class="bi bi-list-ul me-2"></i>จัดการคลังสินค้า</h4>
+                <div>
+                    <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#orderHistoryModal" onclick="loadOrders()">
+                        <i class="bi bi-receipt"></i> จัดการออเดอร์
+                    </button>
+                    <button class="btn btn-primary me-2" data-bs-toggle="modal" data-bs-target="#createProductModal">
+                        <i class="bi bi-plus-lg"></i> เพิ่มสินค้า
+                    </button>
+                    <button class="btn btn-success" onclick="loadProducts()">
+                        <i class="bi bi-arrow-clockwise"></i> รีเฟรช
+                    </button>
+                </div>
+            </div>
+            <div class="row" id="productList"></div>
+        </div>
+    </div>
+
+    <!-- Modal: เพิ่มสินค้าใหม่ -->
+    <div class="modal fade" id="createProductModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title fw-bold text-primary">สร้างสินค้าใหม่</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <input type="text" class="form-control mb-3" id="newProdSku" placeholder="รหัส SKU (เช่น P-001)">
+                    <input type="text" class="form-control mb-3" id="newProdName" placeholder="ชื่อสินค้า">
+                    <textarea class="form-control mb-3" id="newProdDesc" placeholder="รายละเอียดสินค้า"></textarea>
+                    <div class="row">
+                        <div class="col-6"><input type="number" class="form-control" id="newProdPrice" placeholder="ราคา (บาท)"></div>
+                        <div class="col-6"><input type="number" class="form-control" id="newProdQty" placeholder="จำนวนเริ่มต้น"></div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light"><button class="btn btn-primary" onclick="submitNewProduct()">บันทึก</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: แก้ไขสินค้า -->
+    <div class="modal fade" id="editProductModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title fw-bold text-warning">แก้ไขข้อมูลสินค้า</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <input type="hidden" id="editProdId">
+                    <label class="form-label small text-muted">ชื่อสินค้า</label>
+                    <input type="text" class="form-control mb-3" id="editProdName">
+                    <label class="form-label small text-muted">รายละเอียด</label>
+                    <textarea class="form-control mb-3" id="editProdDesc"></textarea>
+                    <label class="form-label small text-muted">ราคา (บาท) *บังคับ</label>
+                    <input type="number" class="form-control mb-3" id="editProdPrice">
+                </div>
+                <div class="modal-footer bg-light"><button class="btn btn-warning" onclick="submitEditProduct()">บันทึกการแก้ไข</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: ปรับจำนวนสต็อก (Inventory) -->
+    <div class="modal fade" id="inventoryModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title fw-bold text-success">ตั้งค่าสต็อก</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-center">
+                    <input type="hidden" id="invProdId">
+                    <p id="invProdName" class="fw-bold mb-3"></p>
+                    <label class="form-label small text-muted">จำนวนล่าสุด (Absolute)</label>
+                    <input type="number" class="form-control text-center fs-4" id="invProdQty">
+                </div>
+                <div class="modal-footer bg-light p-2 justify-content-center"><button class="btn btn-success w-100" onclick="submitInventory()">อัปเดตสต็อก</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: จัดการประวัติการสั่งซื้อ (Orders) -->
+    <div class="modal fade" id="orderHistoryModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-light"><h5 class="modal-title fw-bold"><i class="bi bi-receipt me-2"></i>จัดการคำสั่งซื้อทั้งหมด</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light"><tr><th>รหัสออเดอร์</th><th>วันที่</th><th>ยอดรวม</th><th>สถานะ (เปลี่ยนได้)</th><th>จัดการ</th></tr></thead>
+                            <tbody id="orderListTable"><tr><td colspan="5" class="text-center">กำลังโหลด...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/bundle.js"></script>
+
+    <script>
+        // --- 1. ระบบ Auth ---
+        async function handleLogin() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span>';
+            try {
+                const res = await window.api.auth.login({ email, password });
+                showDashboard(res.user.username);
+                loadProducts();
+            } catch (err) { logDiv.innerHTML = `<span class="text-danger">ล้มเหลว: ${err.message}</span>`; }
+        }
+
+        function showDashboard(username) {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'block';
+            document.getElementById('userMenu').style.display = 'block';
+            document.getElementById('welcomeMsg').innerHTML = `<b>${username}</b>`;
+        }
+
+        function handleLogout() {
+            if(window.api.auth) window.api.auth.logout();
+            location.reload();
+        }
+
+        // --- 2. ระบบ Products ---
+        async function loadProducts() {
+            const list = document.getElementById('productList');
+            list.innerHTML = '<div class="text-center py-5"><span class="spinner-border text-primary"></span></div>';
+            try {
+                // ดึงข้อมูลแบบ Array ดิบๆ ตาม API ปัจจุบัน
+                const products = await window.api.stock.listProducts();
+                renderProducts(products || []);
+            } catch (err) { list.innerHTML = `<div class="text-danger text-center">ดึงข้อมูลล้มเหลว: ${err.message}</div>`; }
+        }
+
+        function renderProducts(products) {
+            const list = document.getElementById('productList');
+            if (!products.length) return list.innerHTML = '<div class="text-muted text-center py-5">ไม่มีสินค้าในระบบ</div>';
+
+            list.innerHTML = products.map(p => {
+                const out = p.quantity <= 0;
+                const badge = out ? '<span class="badge bg-danger">หมด</span>' : `<span class="badge bg-success">เหลือ ${p.quantity}</span>`;
+                // แปลงข้อมูลกันพังสำหรับใส่ใน onclick
+                const safeDesc = p.description ? p.description.replace(/'/g, "\\'") : '';
+                const safeName = p.name.replace(/'/g, "\\'");
+
+                return `
+                <div class="col-md-4 mb-4">
+                    <div class="card card-shadow product-card h-100">
+                        <div class="action-menu dropdown">
+                            <button class="btn btn-sm btn-light shadow-sm rounded-circle dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots-vertical"></i></button>
+                            <ul class="dropdown-menu dropdown-menu-end shadow">
+                                <li><a class="dropdown-item" href="#" onclick="openEditModal('${p.id}', '${safeName}', '${safeDesc}', ${p.price})"><i class="bi bi-pencil me-2"></i> แก้ไขข้อมูล</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="openInventoryModal('${p.id}', '${safeName}', ${p.quantity})"><i class="bi bi-box-seam me-2"></i> ปรับสต็อก</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="deleteProduct('${p.id}', '${safeName}')"><i class="bi bi-trash me-2"></i> ลบทิ้ง</a></li>
+                            </ul>
+                        </div>
+                        <div class="card-body mt-2">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted small">${p.sku}</span> ${badge}
+                            </div>
+                            <h5 class="fw-bold mb-1">${p.name}</h5>
+                            <p class="text-muted small text-truncate">${p.description || '-'}</p>
+                            <h4 class="text-primary fw-bold my-3">฿${p.price.toFixed(2)}</h4>
+                            <button class="btn btn-outline-primary w-100 mt-auto" onclick="buyProduct('${p.id}')" ${out ? 'disabled' : ''}>สั่งซื้อ 1 ชิ้น</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function submitNewProduct() {
+            try {
+                await window.api.stock.createProduct({
+                    sku: document.getElementById('newProdSku').value,
+                    name: document.getElementById('newProdName').value,
+                    description: document.getElementById('newProdDesc').value,
+                    price: parseFloat(document.getElementById('newProdPrice').value),
+                    quantity: parseInt(document.getElementById('newProdQty').value || 0)
+                });
+                bootstrap.Modal.getInstance(document.getElementById('createProductModal')).hide();
+                loadProducts();
+            } catch (err) { alert(`Error: ${err.message}`); }
+        }
+
+        // --- 3. อัปเดต/ลบ/ปรับสต็อก (ใหม่!) ---
+        function openEditModal(id, name, desc, price) {
+            document.getElementById('editProdId').value = id;
+            document.getElementById('editProdName').value = name;
+            document.getElementById('editProdDesc').value = desc;
+            document.getElementById('editProdPrice').value = price;
+            new bootstrap.Modal(document.getElementById('editProductModal')).show();
+        }
+
+        async function submitEditProduct() {
+            const id = document.getElementById('editProdId').value;
+            try {
+                await window.api.stock.updateProduct(id, {
+                    name: document.getElementById('editProdName').value,
+                    description: document.getElementById('editProdDesc').value,
+                    price: parseFloat(document.getElementById('editProdPrice').value)
+                });
+                bootstrap.Modal.getInstance(document.getElementById('editProductModal')).hide();
+                loadProducts();
+            } catch (err) { alert(`Error: ${err.message}`); }
+        }
+
+        function openInventoryModal(id, name, qty) {
+            document.getElementById('invProdId').value = id;
+            document.getElementById('invProdName').innerText = name;
+            document.getElementById('invProdQty').value = qty;
+            new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+        }
+
+        async function submitInventory() {
+            const id = document.getElementById('invProdId').value;
+            const qty = parseInt(document.getElementById('invProdQty').value);
+            try {
+                await window.api.stock.setInventory(id, qty);
+                bootstrap.Modal.getInstance(document.getElementById('inventoryModal')).hide();
+                loadProducts();
+            } catch (err) { alert(`Error: ${err.message}`); }
+        }
+
+        async function deleteProduct(id, name) {
+            if (!confirm(`ยืนยันการลบสินค้า "${name}" ใช่หรือไม่?\nสต็อกของสินค้านี้จะหายไปด้วย`)) return;
+            try {
+                await window.api.stock.deleteProduct(id);
+                loadProducts();
+            } catch (err) { alert(`ลบไม่สำเร็จ: ${err.message}`); }
+        }
+
+        // --- 4. ระบบ Orders ---
+        async function buyProduct(productId) {
+            try {
+                await window.api.order.placeOrder({ items: [{ product_id: productId, quantity: 1 }] });
+                loadProducts(); // สต็อกลด โหลดสินค้าใหม่
+                alert('สั่งซื้อสำเร็จ! ตัดสต็อกแล้ว');
+            } catch (err) { alert(`สั่งซื้อพัง: ${err.message}`); }
+        }
+
+        async function loadOrders() {
+            const tbody = document.getElementById('orderListTable');
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+            try {
+                const orders = await window.api.order.listOrders();
+                if (!orders || orders.length === 0) return tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">ยังไม่มีออเดอร์</td></tr>';
+
+                tbody.innerHTML = orders.map(o => `
+                    <tr>
+                        <td class="small text-muted">${o.id.substring(0,8)}...</td>
+                        <td>${new Date(o.created_at).toLocaleString('th-TH')}</td>
+                        <td class="fw-bold text-success">฿${o.total_price ? o.total_price.toFixed(2) : '0.00'}</td>
+                        <td>
+                            <select class="form-select form-select-sm w-auto ${o.status === 'CANCELLED' ? 'border-danger text-danger' : ''}"
+                                    onchange="changeOrderStatus('${o.id}', this.value)"
+                                    ${o.status === 'CANCELLED' || o.status === 'SHIPPED' ? 'disabled' : ''}>
+                                <option value="PENDING" ${o.status === 'PENDING' ? 'selected' : ''}>PENDING (รอดำเนินการ)</option>
+                                <option value="PAID" ${o.status === 'PAID' ? 'selected' : ''}>PAID (จ่ายแล้ว)</option>
+                                <option value="SHIPPED" ${o.status === 'SHIPPED' ? 'selected' : ''}>SHIPPED (ส่งแล้ว)</option>
+                                <option value="CANCELLED" ${o.status === 'CANCELLED' ? 'selected' : ''}>CANCELLED (ยกเลิก/คืนสต็อก)</option>
+                            </select>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteOrder('${o.id}')"><i class="bi bi-trash"></i></button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) { tbody.innerHTML = `<tr><td colspan="5" class="text-danger">ดึงข้อมูลไม่ได้: ${err.message}</td></tr>`; }
+        }
+
+        async function changeOrderStatus(id, newStatus) {
+            try {
+                await window.api.order.updateOrderStatus(id, newStatus);
+                loadOrders(); // รีเฟรชตาราง
+                loadProducts(); // ถ้ายกเลิก สต็อกจะเด้งกลับ ต้องรีโหลดหน้าสินค้าด้วย
+            } catch (err) { alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`); loadOrders(); /* reset dropdown */ }
+        }
+
+        async function deleteOrder(id) {
+            if (!confirm('ลบออเดอร์นี้ทิ้งถาวรใช่ไหม? (จะไม่คืนสต็อกสินค้านะ)')) return;
+            try {
+                await window.api.order.deleteOrder(id);
+                loadOrders();
+            } catch (err) { alert(`ลบไม่สำเร็จ: ${err.message}`); }
+        }
+    </script>
+</body>
+</html>
