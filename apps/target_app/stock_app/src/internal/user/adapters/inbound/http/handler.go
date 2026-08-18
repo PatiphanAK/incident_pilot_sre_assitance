@@ -2,7 +2,11 @@ package handlers
 
 import (
 	"errors"
+<<<<<<< HEAD
+	"fmt"
+=======
 	"log/slog"
+>>>>>>> main
 	netmail "net/mail"
 
 	"github.com/gofiber/fiber/v3"
@@ -169,6 +173,7 @@ func (h *Handler) bind(c fiber.Ctx) (userRequest, error) {
 }
 
 func (h *Handler) mapError(c fiber.Ctx, err error) error {
+	fmt.Println("🔥 Backend Error ->", err) // << บรรทัดดักจับ Error
 	switch {
 	case errors.Is(err, domain.ErrUserNotFound):
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})

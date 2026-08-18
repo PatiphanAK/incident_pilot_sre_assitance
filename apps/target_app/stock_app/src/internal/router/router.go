@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stock_app/src/internal/apidoc"
@@ -162,14 +163,31 @@ func envOr(key, def string) string {
 
 // Register mounts cross-cutting routes and delegates route registration to each module.
 func Register(app *fiber.App, deps *Dependencies) {
+<<<<<<< HEAD
+	// เปิดทางให้ Frontend จากพอร์ต 5173 ยิง API เข้ามาได้
+	app.Use(cors.New())
+
+=======
 	app.Use(observability.RequestMiddleware(deps.Metrics))
 	apidoc.RegisterRoutes(app)
+>>>>>>> main
 	app.Get("/health", health(deps))
 
 	// API versioned under /api/v1: every module's routes are mounted on this
 	// group, so a future /api/v2 can be added alongside without moving v1.
 	api := app.Group("/api/v1")
 	deps.User.RegisterRoutes(api)
+<<<<<<< HEAD
+
+	// 👉 เพิ่มเส้นทางสำหรับจัดการ Order ตรงนี้ครับ
+	api.Post("/orders", func(c fiber.Ctx) error {
+		// จำลองการสั่งซื้อสำเร็จและตัดสต็อก
+		return c.JSON(fiber.Map{
+			"message": "Order placed successfully",
+			"status":  "success",
+		})
+	})
+=======
 	deps.Stock.RegisterRoutes(api)
 	deps.Order.RegisterRoutes(api)
 }
@@ -188,6 +206,7 @@ func healthCheck(ctx context.Context, name string, p *pgxpool.Pool, check func(c
 	}
 	m.ObserveDatabase(name, time.Since(start), nil)
 	return nil
+>>>>>>> main
 }
 
 func health(deps *Dependencies) fiber.Handler {
